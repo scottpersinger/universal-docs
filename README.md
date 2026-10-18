@@ -1,8 +1,17 @@
 # MCP Docs
 
-A Mac app for the documents in a folder on your Mac: Word, PowerPoint and Excel files, Markdown, CSV, PDFs, pictures
-and videos, edited in place. It is also an **MCP server**, so your coding agent (Claude Code, or any other MCP client)
-can open, read, create and edit those files with you while you watch each change land in the app.
+MCP Docs is a universal document editor for all standard office document types, images and PDFs. Integrated with agentic AI through MCP, it lets LLM-powered agents open, read, create and edit documents alongside you, with every change visible in the app.
+
+**Full editing for**
+
+* Slides (Powerpoint)
+* Documents (Word, Markdown, text)
+* HTML pages
+* Spreadsheets (Excel)
+* PDF files
+* Images
+
+![PowerPoint](https://img.icons8.com/color/48/microsoft-powerpoint-2019--v1.png) ![Word](https://img.icons8.com/color/48/microsoft-word-2019--v1.png) ![Excel](https://img.icons8.com/color/48/microsoft-excel-2019--v1.png) ![PDF](https://img.icons8.com/color/48/pdf.png) ![Images](https://img.icons8.com/color/48/image.png)
 
 [![Download MCP Docs for macOS](https://img.shields.io/badge/Download-MCP%20Docs%20for%20macOS-2ea44f?logo=apple)](https://github.com/scottpersinger/universal-docs/releases/latest)
 [![npm](https://img.shields.io/npm/v/@scottpersinger/mcp-docs?label=npx%20%40scottpersinger%2Fmcp-docs)](https://www.npmjs.com/package/@scottpersinger/mcp-docs)
@@ -18,12 +27,12 @@ MCP server and a skill on using it), and starts the app. Run it again to update 
 from the [latest release](https://github.com/scottpersinger/universal-docs/releases/latest); its notes say how to
 install it by hand. It needs a Mac with Apple silicon.
 
-The app works on a folder on your Mac (your home folder the first time; **File › Open Folder…** picks another).
-There is no account and nothing to sign in to: install it locally. A web version is in this repository too
-([Web version](#web-version)) and will come later; for now the desktop app is the way to use MCP Docs.
+## Uninstall 
 
-To remove it all again, `npx @scottpersinger/mcp-docs --uninstall` removes the app, its data and settings, and what
-it added to Claude Code. Your documents are not touched.
+```
+npx @scottpersinger/mcp-docs --uninstall
+```
+ removes the app, its data and settings, and agent config.
 
 ## Connect your coding agent
 
