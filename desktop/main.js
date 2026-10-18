@@ -51,8 +51,67 @@ function rememberFolder(dir) {
   }
 }
 
-/** The running server and the folder it serves. */
-let current = null;
+// --- Folders, their servers and the windows showing them ---------------------------------------------------
+// Each window (a tab, on macOS) shows one folder, and each folder open in a window has a server of its own, which
+// stops when its last window closes. Opening a folder changes the window it was asked in, not the others.
+/** The servers running, by folder. */
+const servers = new Map();
+/** Folders whose server is starting, so two windows opening one folder share it. */
+const starting = new Map();
+/** Each window's server, by window id. */
+const windowServers = new Map();
+/** The window last in front: what the menu, Finder and agents act on. */
+let front = null;
+
+const serverOf = (win) => (win && !win.isDestroyed() ? windowServers.get(win.id) : undefined);
+/** The server of the window in front; agents' MCP requests go to it. */
+const frontServer = () => serverOf(BrowserWindow.getFocusedWindow()) ?? serverOf(front) ?? servers.values().next().value ?? null;
+
+/** The window to show something of `server` in: the one in front when it is that server's, else one of its own. */
+function windowFor(server) {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (serverOf(focused) === server) return focused;
+  if (serverOf(front) === server) return front;
+  return [...server.windows][0] ?? null;
+}
+
+/** Make `win` one of `server`'s windows (and no longer one of the server it showed before). */
+function attach(win, server) {
+  const old = serverOf(win);
+  if (old === server) return;
+  windowServers.set(win.id, server);
+  server.windows.add(win);
+  if (old) {
+    old.windows.delete(win);
+    release(old);
+  }
+}
+
+/** A window closed: its server stops if no window shows its folder any more. */
+function detach(id, win) {
+  const server = windowServers.get(id);
+  windowServers.delete(id);
+  if (front === win) front = null;
+  if (!server) return;
+  server.windows.delete(win);
+  release(server);
+}
+
+function release(server) {
+  if (server.windows.size) return;
+  servers.delete(server.dir);
+  server.child.removeAllListeners('exit');
+  server.child.kill('SIGTERM');
+  void session.defaultSession.cookies.remove(server.origin, server.cookie).catch(() => {});
+}
+
+function stopServers() {
+  for (const server of servers.values()) {
+    server.child.removeAllListeners('exit');
+    server.child.kill('SIGTERM');
+  }
+  servers.clear();
+}
 
 // --- The MCP server, for agents on this machine (server/localMcp.ts) ------------------------------------
 // The folder's server is on a port the system picks, and a new one starts with each folder. Agents are set up
@@ -114,6 +173,7 @@ function startMcpProxy() {
       }
       headers.authorization = `Bearer ${MCP_SECRET}`;
     }
+    const current = frontServer();
     if (!current) return void res.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'The app is opening a folder. Try again in a moment.' }));
     const up = http.request({ host: '127.0.0.1', port: current.port, method: req.method, path: req.url, headers }, (upRes) => {
       res.writeHead(upRes.statusCode ?? 502, upRes.headers);
@@ -148,12 +208,13 @@ function bringToFront() {
 }
 
 /**
- * Put a page of the app (a file the model opened, created or imported) in the window, and bring the app to
- * the front so the person sees it. Edits to the file already showing do not come here.
+ * Put a page of the app (a file the model opened, created or imported) in a window of `server`'s folder, and
+ * bring the app to the front so the person sees it. Edits to the file already showing do not come here.
  */
-function showPage(page) {
-  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-  if (!win) return current && createWindow(`${current.origin}${page}`);
+function showPage(page, server = frontServer()) {
+  if (!server) return;
+  const win = windowFor(server);
+  if (!win) return createWindow(server, `${server.origin}${page}`);
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -163,8 +224,8 @@ function showPage(page) {
 }
 
 /** An agent rewrote a stored file: a window showing it loads it again (FilePage listens for this, as for the app's own assistant). */
-function fileChanged(id) {
-  for (const win of BrowserWindow.getAllWindows()) {
+function fileChanged(id, server) {
+  for (const win of server.windows) {
     void win.webContents.executeJavaScript(`dispatchEvent(new CustomEvent('stored-file-changed', { detail: ${JSON.stringify(id)} }))`).catch(() => {});
   }
 }
@@ -211,95 +272,156 @@ function readShellKeys() {
   });
 }
 
-/** Start a server for the folder; resolves to its origin once it is listening. */
-function startServer(dir) {
+/** The server for a folder: the one running, or a new one once it is listening. */
+function serverFor(dir) {
+  const running = servers.get(dir);
+  if (running) return Promise.resolve(running);
+  if (!starting.has(dir)) {
+    const start = startServer(dir).finally(() => starting.delete(dir));
+    starting.set(dir, start);
+  }
+  return starting.get(dir);
+}
+
+/** Start a server for the folder; resolves once it is listening. */
+async function startServer(dir) {
   const token = randomBytes(32).toString('base64url');
+  // Cookies are per host, not per port: each folder's server has a cookie of its own on 127.0.0.1.
+  const cookie = `local-${randomBytes(6).toString('hex')}`;
   // What the app keeps for a folder (chat history, settings, pasted images, deleted files) lives with the
   // app's own data, not in the folder.
   const dataDir = path.join(app.getPath('userData'), 'folders', createHash('sha256').update(dir).digest('hex').slice(0, 16));
   // Electron runs as plain Node in a forked child. The working directory is the app's, where .env is.
   const child = fork(path.join(root, 'desktop', 'server.ts'), [], {
     cwd: root,
-    env: { ...process.env, ...shellKeys, LOCAL_DIR: dir, DATA_DIR: dataDir, APP_DATA_DIR: app.getPath('userData'), LOCAL_TOKEN: token, PORT: '0', MCP_TOKEN: MCP_SECRET, MCP_URL },
+    env: { ...process.env, ...shellKeys, LOCAL_DIR: dir, DATA_DIR: dataDir, APP_DATA_DIR: app.getPath('userData'), LOCAL_TOKEN: token, LOCAL_COOKIE: cookie, PORT: '0', MCP_TOKEN: MCP_SECRET, MCP_URL },
   });
-  return new Promise((resolve, reject) => {
-    child.once('message', (msg) => resolve({ child, dir, token, port: msg.port, origin: `http://127.0.0.1:${msg.port}` }));
-    // Later the server asks for a file outside its folder to be shown (one of Recents), or a page (a file an agent opened).
-    child.on('message', (msg) => {
-      if (msg && typeof msg.openFile === 'string') void openFile(msg.openFile, msg.fromRecents !== false).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e)));
-      if (msg && typeof msg.openFolder === 'string') void openFolder(msg.openFolder).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e)));
-      if (msg?.chooseFolder) void chooseFolder().catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e)));
-      if (msg?.connectAgent) void connectAgent().catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e)));
-      if (msg && typeof msg.show === 'string' && msg.show.startsWith('/')) showPage(msg.show);
-      if (msg && typeof msg.fileChanged === 'string') fileChanged(msg.fileChanged);
-    });
+  const server = await new Promise((resolve, reject) => {
+    child.once('message', (msg) => resolve({ child, dir, token, cookie, port: msg.port, origin: `http://127.0.0.1:${msg.port}`, windows: new Set() }));
     child.once('error', reject);
     child.once('exit', (code) => reject(new Error(`The server stopped while starting (exit code ${code}).`)));
   });
-}
-
-function stopServer() {
-  if (!current) return;
-  current.child.removeAllListeners('exit');
-  current.child.kill('SIGTERM');
-  current = null;
+  child.removeAllListeners('error');
+  child.removeAllListeners('exit');
+  child.on('error', () => {}); // It stopping is what counts, below.
+  const failed = (e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e));
+  // Later the server asks, for the window it serves that the person is using, for a file outside its folder to
+  // be shown (one of Recents), another folder, or a page (a file an agent opened).
+  child.on('message', (msg) => {
+    if (msg && typeof msg.openFile === 'string') void openFile(msg.openFile, msg.fromRecents !== false, windowFor(server)).catch(failed);
+    if (msg && typeof msg.openFolder === 'string') void openFolder(msg.openFolder, '/', windowFor(server)).catch(failed);
+    if (msg?.chooseFolder) void chooseFolder(windowFor(server)).catch(failed);
+    if (msg?.connectAgent) void connectAgent().catch(failed);
+    if (msg && typeof msg.show === 'string' && msg.show.startsWith('/')) showPage(msg.show, server);
+    if (msg && typeof msg.fileChanged === 'string') fileChanged(msg.fileChanged, server);
+  });
+  child.once('exit', () => {
+    servers.delete(dir);
+    dialog.showErrorBox('MCP Docs', `The local server for “${dir}” stopped unexpectedly. Its windows will close.`);
+    for (const win of [...server.windows]) win.destroy();
+  });
+  // Only this app's windows hold the token, so nothing else on the machine can use the server.
+  await session.defaultSession.cookies.set({ url: server.origin, name: cookie, value: token, httpOnly: true, sameSite: 'strict' });
+  servers.set(dir, server);
+  return server;
 }
 
 const TABS = 'freeflow';
+const WINDOW_OPTIONS = { width: 1400, height: 900, title: 'MCP Docs', tabbingIdentifier: TABS };
 
-function createWindow(url) {
-  // On macOS the app's windows share one tab group.
-  const win = new BrowserWindow({ width: 1400, height: 900, title: 'MCP Docs', tabbingIdentifier: TABS });
+/** Keep track of a window of the app: which folder it shows, and when it is the one in front. */
+function track(win, server) {
+  const id = win.id;
+  attach(win, server);
+  // index.html is titled with the hosted app's name until the page learns it is this app (client/src/brand.ts).
+  win.on('page-title-updated', (e, title) => title === 'Universal Docs' && e.preventDefault());
+  win.on('focus', () => {
+    front = win;
+    const s = serverOf(win);
+    if (s) rememberFolder(s.dir);
+  });
+  win.once('closed', () => detach(id, win));
+}
+
+/** A window on `url` of `server`'s folder; with `tabOf`, a tab of that window where the system has them (macOS). */
+function createWindow(server, url, tabOf = null) {
+  const win = new BrowserWindow(WINDOW_OPTIONS);
+  track(win, server);
+  if (tabOf && !tabOf.isDestroyed() && process.platform === 'darwin') tabOf.addTabbedWindow(win);
   void win.loadURL(url);
   return win;
 }
 
 // "Open in a new tab" (window.open) opens another window of the app, as a tab of the window it came from
-// where the system has window tabs (macOS); links to anywhere else go to the browser.
+// where the system has window tabs (macOS), on the same folder; links to anywhere else go to the browser.
+const serverAt = (url) => [...servers.values()].find((s) => url.startsWith(`${s.origin}/`));
 app.on('web-contents-created', (_e, contents) => {
   contents.setWindowOpenHandler(({ url: target }) => {
-    if (current && target.startsWith(`${current.origin}/`)) return { action: 'allow', overrideBrowserWindowOptions: { width: 1400, height: 900, tabbingIdentifier: TABS } };
+    if (serverAt(target)) return { action: 'allow', overrideBrowserWindowOptions: WINDOW_OPTIONS };
     void shell.openExternal(target);
     return { action: 'deny' };
   });
-  contents.on('did-create-window', (child) => {
+  contents.on('did-create-window', (child, { url }) => {
     const opener = BrowserWindow.fromWebContents(contents);
+    const server = serverOf(opener) ?? serverAt(url);
+    if (server) track(child, server);
     if (process.platform === 'darwin' && opener) opener.addTabbedWindow(child);
   });
 });
 
-/** Serve `dir` and show it, replacing the folder that was open. `landing` is the page the window starts on. */
-async function openFolder(dir, landing = '/') {
-  const windows = BrowserWindow.getAllWindows();
-  stopServer();
-  current = await startServer(dir);
-  rememberFolder(dir);
-  current.child.once('exit', () => {
-    dialog.showErrorBox('MCP Docs', 'The local server stopped unexpectedly. The app will close.');
-    app.quit();
-  });
-  // Only this app's windows hold the token, so nothing else on the machine can use the server.
-  await session.defaultSession.cookies.set({ url: current.origin, name: 'local', value: current.token, httpOnly: true, sameSite: 'strict' });
-  createWindow(`${current.origin}${landing}`);
-  for (const w of windows) w.destroy();
+/**
+ * Show `dir` in `win` (the window it was opened from), or in a new window (a tab of the one in front) when
+ * there is none. Other windows keep their folders. `landing` is the page the window starts on.
+ */
+async function openFolder(dir, landing = '/', win = null) {
+  const server = await serverFor(path.resolve(dir));
+  rememberFolder(server.dir);
+  if (win && !win.isDestroyed()) {
+    attach(win, server);
+    void win.loadURL(`${server.origin}${landing}`);
+  } else createWindow(server, `${server.origin}${landing}`, front);
 }
 
 /**
- * Show a file that is not in the open folder: its own folder becomes the open one, and the window starts on
- * the file. One of Recents (`fromRecents`) keeps Recents as the list its breadcrumbs lead back to.
+ * Show a file that is not in the window's folder: its own folder becomes the window's (or a new tab's, with
+ * no window), and the window starts on the file. One of Recents (`fromRecents`) keeps Recents as the list its
+ * breadcrumbs lead back to.
  */
-async function openFile(file, fromRecents = true) {
+async function openFile(file, fromRecents = true, win = null) {
   if (!isDir(path.dirname(file))) throw new Error(`"${file}" is no longer there.`);
-  await openFolder(path.dirname(file), `/open?file=${encodeURIComponent(path.basename(file))}${fromRecents ? '&from=recents' : ''}`);
+  await openFolder(path.dirname(file), `/open?file=${encodeURIComponent(path.basename(file))}${fromRecents ? '&from=recents' : ''}`, win);
 }
 
-/** Show a file the system asked the app to open (Finder): in the open folder when it is there, else in its own. */
+/** Show a file the system asked the app to open (Finder): in the folder in front when it is there, else in a new tab on its own folder. */
 async function showFile(file) {
+  const current = frontServer();
   const rel = current ? path.relative(current.dir, file) : '';
   const parts = rel.split(path.sep);
   // The open folder's server lists no hidden files or folders, so a file among them opens in its own folder.
-  if (rel && !path.isAbsolute(rel) && !parts.some((p) => p === '..' || p.startsWith('.'))) showPage(`/open?file=${encodeURIComponent(parts.join('/'))}`);
+  if (rel && !path.isAbsolute(rel) && !parts.some((p) => p === '..' || p.startsWith('.'))) showPage(`/open?file=${encodeURIComponent(parts.join('/'))}`, current);
   else await openFile(file, false);
+}
+
+/**
+ * A new tab beside the window in front, on its folder, showing the list it shows: its folder within the
+ * folder, or Recents. A file's page names the list it came from (client/src/listing.ts).
+ */
+async function newTab() {
+  const win = BrowserWindow.getFocusedWindow() ?? front;
+  const server = serverOf(win) ?? frontServer();
+  if (!server) return openFolder(lastFolder() ?? app.getPath('home'));
+  let listing = '/';
+  try {
+    listing = await win.webContents.executeJavaScript(`(() => {
+      const q = new URLSearchParams(location.pathname === '/' ? location.search : sessionStorage.getItem('ui.lastListing') ?? '');
+      if (q.get('recents') === '1') return '/?recents=1';
+      const folder = q.get('folder');
+      return folder ? '/?folder=' + encodeURIComponent(folder) : '/';
+    })()`);
+  } catch {
+    // The top of the folder, then.
+  }
+  createWindow(server, `${server.origin}${listing}`, win).focus();
 }
 
 // Finder asks for a file (a double-click when the app is the file's default, Open With, a file dropped on the
@@ -371,10 +493,12 @@ async function offerDefaultApp(first = false) {
   }
 }
 
-async function chooseFolder() {
-  const res = await dialog.showOpenDialog({ title: 'Open folder', properties: ['openDirectory', 'createDirectory'], defaultPath: current?.dir ?? app.getPath('documents') });
+/** Ask for a folder and show it in `win` (the window it was asked from), or in a new window with none. */
+async function chooseFolder(win = null) {
+  const options = { title: 'Open folder', properties: ['openDirectory', 'createDirectory'], defaultPath: serverOf(win)?.dir ?? app.getPath('documents') };
+  const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   if (res.canceled || !res.filePaths[0]) return false;
-  await openFolder(res.filePaths[0]);
+  await openFolder(res.filePaths[0], '/', win);
   return true;
 }
 
@@ -404,9 +528,18 @@ function buildMenu() {
       {
         label: 'File',
         submenu: [
-          { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: () => void chooseFolder().catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
-          { label: mac ? 'Show Folder in Finder' : 'Show Folder', click: () => current && void shell.openPath(current.dir) },
-          { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => current && createWindow(`${current.origin}/`) },
+          { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => void newTab().catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
+          {
+            label: 'New Window',
+            accelerator: 'CmdOrCtrl+Shift+N',
+            click: () => {
+              const server = frontServer();
+              if (server) createWindow(server, `${server.origin}/`);
+            },
+          },
+          { type: 'separator' },
+          { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: () => void chooseFolder(BrowserWindow.getFocusedWindow()).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
+          { label: mac ? 'Show Folder in Finder' : 'Show Folder', click: () => frontServer() && void shell.openPath(frontServer().dir) },
           { type: 'separator' },
           { label: 'Connect an Agent (MCP)…', click: () => void connectAgent() },
           { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showPage('/settings') },
@@ -459,14 +592,17 @@ app.whenReady().then(async () => {
   } finally {
     started = true;
     // The installed app offers once to open the standard formats too.
-    if (current && canBeDefault() && !existsSync(defaultAskedFile())) void offerDefaultApp(true);
+    if (servers.size && canBeDefault() && !existsSync(defaultAskedFile())) void offerDefaultApp(true);
   }
 });
 
+// With no window left (on macOS the app keeps running), the Dock icon opens the folder last in front.
 app.on('activate', () => {
-  if (current && BrowserWindow.getAllWindows().length === 0) createWindow(`${current.origin}/`);
+  if (started && BrowserWindow.getAllWindows().length === 0) void openFolder(lastFolder() ?? app.getPath('home')).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e)));
 });
+// The + in the tab bar (macOS).
+app.on('new-window-for-tab', () => void newTab().catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))));
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
-app.on('quit', stopServer);
+app.on('quit', stopServers);

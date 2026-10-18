@@ -23,6 +23,7 @@ const app = await buildApp({
   local: {
     dir,
     token: process.env.LOCAL_TOKEN || undefined,
+    cookie: process.env.LOCAL_COOKIE || undefined,
     openFile: (file, fromRecents = true) => process.send?.({ openFile: file, fromRecents }),
     openFolder: (dir) => process.send?.({ openFolder: dir }),
     chooseFolder: () => process.send?.({ chooseFolder: true }),

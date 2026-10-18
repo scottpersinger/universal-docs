@@ -43,7 +43,11 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   (the hosted app and the ChatGPT plugin are Universal Docs; code shared by both names it with `appName` in
   `shared/brand.ts`, and the client with `appName()` in `client/src/brand.ts`, set from `/api/auth/me`). `main.js`
   starts `desktop/server.ts` as a child process for the folder being opened (the command-line argument or
-  the current directory) and loads it in a window. `buildApp({ local: { dir, token } })` swaps in the
+  the current directory) and loads it in a window. Each window (a tab, on macOS) shows one folder, and each folder
+  open in a window has a server of its own, stopped when its last window closes; opening a folder (Open Folder…, a
+  file of Recents outside it) changes only the window it was asked in. File › New Tab (⌘T, `newTab`) opens the
+  folder and list of the window in front. The servers' token cookies are on one host, so each has its own cookie
+  name (`local.cookie`, `LOCAL_COOKIE`). `buildApp({ local: { dir, token } })` swaps in the
   folder-backed stores of `server/localStore.ts` (`LocalSheetStore` and `LocalFileStore`, subclasses that
   override the on-disk hooks of `SheetStore` and `FileStore`: real `.md`/`.csv` files, `.ffsheet`/`.ffslides`/
   `.ffdoc` for the JSON formats, the tables synced with the folder on every list) and makes every request
@@ -80,7 +84,7 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   (`mcp-docs`; the hosted one is Universal Docs, `universal-docs`, from version 2): `server/localMcp.ts`
   serves the ChatGPT plugin's model tools (`plugin/server`, the newest version, no UI parts) over the open
   folder's stores at `/mcp`. `main.js` serves it on a fixed port (127.0.0.1:39217, `UNIVERSAL_MCP_PORT`),
-  passing requests to whichever folder's server is running with a secret made for each run. Agents sign in
+  passing requests to the server of the window in front (`frontServer`) with a secret made for each run. Agents sign in
   with OAuth 2.1 (`desktop/mcpAuth.js`: registration, PKCE, refresh; the person allows each agent in a native
   dialog, not on the web page; tokens hashed in `mcp-auth.json` in the app's data folder), and File › Connect
   an Agent (MCP)… shows the `claude mcp add` command and disconnects them. For Claude Code it is also a plugin,

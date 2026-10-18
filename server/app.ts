@@ -124,6 +124,11 @@ export interface AppOptions {
     dir: string;
     token?: string;
     /**
+     * The cookie the token is in ("local" when not given). Cookies are per host, not per port, so servers
+     * running side by side (one for each folder open in the desktop app) each need their own.
+     */
+    cookie?: string;
+    /**
      * Show a file that is outside the folder: the desktop app (desktop/main.js) opens the file's own folder
      * in place of this one. Without it only files inside the folder can be opened from Recents.
      */
@@ -291,7 +296,7 @@ export async function buildApp(opts: AppOptions) {
     ? await mountLocalMcp(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, folders, userId: localUser!.id, token: opts.local.mcp.token, publicUrl: opts.local.mcp.url ?? null, show: opts.local.mcp.show, changed: opts.local.mcp.changed, live: windowTools })
     : null;
   app.addHook('onRequest', async (req) => {
-    if (localUser) req.user = !opts.local!.token || req.cookies[LOCAL_COOKIE] === opts.local!.token ? localUser : null;
+    if (localUser) req.user = !opts.local!.token || req.cookies[opts.local!.cookie ?? LOCAL_COOKIE] === opts.local!.token ? localUser : null;
     else req.user = auth.userForSession(req.cookies[SESSION_COOKIE]);
   });
   app.addHook('onClose', async () => {
