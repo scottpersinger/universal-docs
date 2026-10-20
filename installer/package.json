@@ -1,6 +1,6 @@
 {
   "name": "@scottpersinger/mcp-docs",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Install the MCP Docs desktop app and its Claude Code plugin: office files on your Mac, edited by Claude Code.",
   "type": "module",
   "bin": {
