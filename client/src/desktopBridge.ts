@@ -16,6 +16,15 @@ export function fileAt(pathname: string): { kind: (typeof KINDS)[keyof typeof KI
   return m ? { kind: KINDS[m[1] as keyof typeof KINDS], id: decodeURIComponent(m[2]) } : null;
 }
 
+/** Each file a page shows goes to the top of the user's Recents (server/recents.ts). */
+export function useRecentOpens(on: boolean): void {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const file = on ? fileAt(pathname) : null;
+    if (file) api.opened(file.kind, file.id).catch(() => {});
+  }, [on, pathname]);
+}
+
 export function useDesktopBridge(on: boolean): void {
   const { pathname } = useLocation();
   const navigate = useNavigate();

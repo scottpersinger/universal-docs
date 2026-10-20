@@ -185,6 +185,10 @@ export interface FileLibraryProps {
     empty: string;
     /** Shown over the list (what could not be listed, what is being opened). */
     notice?: ReactNode;
+    /** The files listed ahead of the rest whatever the sort (Recents: the ones opened in the app). */
+    first?(item: LibraryItem): boolean;
+    /** Shown below its files (more of them being looked for). While it is there, no files is not "empty". */
+    footer?: ReactNode;
   };
   /** Download a folder and everything in it. Adds "Download" to a folder's menu. */
   onDownloadFolder?(path: string): void;
@@ -292,6 +296,7 @@ export function FileLibrary(props: FileLibraryProps) {
   const { items, error, importing, onOpen } = props;
   const other = props.otherList;
   const otherShown = !!other?.active;
+  const otherFooter = otherShown ? other?.footer : undefined;
   const createKinds = props.createKinds ?? ALL_KINDS;
   // The box shows what was typed right away; a page that keeps the search hears of each change, and its
   // own changes (another address: Back, a folder opened) replace the text. What the page says back about a
@@ -521,7 +526,8 @@ export function FileLibrary(props: FileLibraryProps) {
   const visible: { s: LibraryItem; depth: number }[] = [];
   if (results) for (const s of [...results.items].sort((a, b) => compareItems(a, b, sort))) visible.push({ s, depth: 0 });
   else if (items) {
-    const sorted = [...items].sort((a, b) => compareItems(a, b, sort));
+    const first = otherShown ? other?.first : undefined;
+    const sorted = [...items].sort((a, b) => (first ? Number(first(b)) - Number(first(a)) : 0) || compareItems(a, b, sort));
     if (q) for (const s of sorted) s.title.toLowerCase().includes(q) && visible.push({ s, depth: 0 });
     else {
       const ids = new Set(sorted.map((s) => s.id));
@@ -812,7 +818,7 @@ export function FileLibrary(props: FileLibraryProps) {
         {moveError && <div className="form-error">{moveError}</div>}
         {items === null ? (
           <div className="muted">Loading…</div>
-        ) : visible.length === 0 && folders.length === 0 && error ? null : visible.length === 0 && folders.length === 0 ? (
+        ) : visible.length === 0 && folders.length === 0 && (error || otherFooter) ? null : visible.length === 0 && folders.length === 0 ? (
           <div className="empty-state">{otherShown && typeFilter === 'all' && !q ? other!.empty : typeFilter !== 'all' ? `No ${TYPE_GROUPS.find(([g]) => g === typeFilter)![1].toLowerCase().replace('pdfs', 'PDFs')} ${results ? 'found' : q ? 'match your search' : 'here'}.` : results ? 'Nothing found in any folder.' : q ? (props.onFind ? 'Nothing here matches your search.' : 'Nothing matches your search.') : trail?.length ? 'This folder is empty.' : 'No files yet. Create a spreadsheet, presentation or document to get started.'}</div>
         ) : view === 'grid' ? (
           <div className="file-grid">
@@ -852,7 +858,8 @@ export function FileLibrary(props: FileLibraryProps) {
             ))}
           </div>
         ) : (
-          <table className="sheet-list">
+          // The other list's columns are fixed, so rows added to it later do not move the ones there.
+          <table className={`sheet-list${otherShown ? ' other-list' : ''}`}>
             <thead>
               <tr>
                 {(
@@ -920,6 +927,7 @@ export function FileLibrary(props: FileLibraryProps) {
             </tbody>
           </table>
         )}
+        {otherFooter}
         {items !== null && q && props.onFind && !results && (
           <div className="find-files">
             <button className="btn" disabled={finding} onClick={() => (props.search ? props.onSearchChange?.(filter, true) : void find())}>

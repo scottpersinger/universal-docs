@@ -20,7 +20,7 @@ import { VerifyEmailPage } from './pages/VerifyEmailPage.tsx';
 import './styles.css';
 import { isPreview } from './components/FilePreviewFrame.tsx';
 import { useHistoryKeys } from './historyKeys.ts';
-import { useDesktopBridge } from './desktopBridge.ts';
+import { useDesktopBridge, useRecentOpens } from './desktopBridge.ts';
 
 // A file's preview in the file list: the same page with only the file showing (styles.css, .file-preview-page).
 const PREVIEW = isPreview();
@@ -46,6 +46,7 @@ function AppShell() {
   const { open } = useAgent();
   useHistoryKeys(!!local && !PREVIEW);
   useDesktopBridge(!!local && !!user && !PREVIEW);
+  useRecentOpens(!!user && !PREVIEW);
   return (
     <div className="app-shell">
       <div className="app-main">

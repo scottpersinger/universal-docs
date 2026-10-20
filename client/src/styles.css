@@ -4640,6 +4640,42 @@ button.agent-tool-label:hover {
 .sheet-list .list-where {
   overflow-wrap: anywhere;
 }
+/* Recents: fixed columns, so the files added below once Spotlight answers do not move the ones above. */
+.sheet-list.other-list {
+  table-layout: fixed;
+}
+.sheet-list.other-list th:nth-child(2) {
+  width: 120px;
+}
+.sheet-list.other-list th:nth-child(3) {
+  width: 170px;
+}
+.sheet-list.other-list th:nth-child(4) {
+  width: 30%;
+}
+.sheet-list.other-list th:last-child {
+  width: 56px;
+}
+.sheet-list.other-list td:first-child {
+  overflow: hidden;
+}
+.sheet-list.other-list:has(+ .list-more) {
+  margin-bottom: 0;
+}
+.list-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 48px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.list-more .spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
 
 /* An open file's place in the library, before its name in the page header. */
 .folder-crumbs {

@@ -1,7 +1,16 @@
-# Sheets
+# Universal Docs / MCP Docs
 
-A web spreadsheet app (React + Vite client, Fastify server, SQLite via `node:sqlite`) with a built-in AI
-assistant. The server runs TypeScript directly with Node's type stripping; imports use `.ts` extensions.
+An editor for office files and more: spreadsheets, presentations, documents, Markdown, CSV, PDFs, pictures
+and videos, with a built-in AI assistant, and an MCP server so other agents can work on the same files. One
+codebase ships as three products (names in `shared/brand.ts`):
+
+- **Universal Docs**, the hosted web app: accounts, files stored on the server.
+- **MCP Docs**, the desktop app (`desktop/`, Electron): the same server and client over a folder of real
+  Word, PowerPoint, Excel, Markdown and CSV files, and an MCP server for agents on the machine (Claude Code).
+- **Universal Docs in ChatGPT**, the ChatGPT plugin (`plugin/`): model tools and a web view, on the hosted app.
+
+React + Vite client, Fastify server, SQLite via `node:sqlite`. The server runs TypeScript directly with Node's
+type stripping; imports use `.ts` extensions.
 
 - `client/src` — React app. Spreadsheet state lives in `client/src/state` (`WorkbookStore` + `Tx` transactions,
   `SheetController` for selection/editing, `ops.ts` for workbook operations such as insert/delete/sort/filter).
@@ -100,9 +109,8 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   the default for the standard ones whatever the app declares, so the installed app offers once, and has
   Make Default App… in the app menu, to set itself as the person's default (`setDefaultApp`). Finder's
   `open-file` shows the file in the open folder when it is inside it, else opens the file's own folder.
-  On macOS it has Recents, a tab beside the open folder's name on the home page (`/?recents=1`, `FileLibrary`'s
-  `otherList`): the files last opened on the machine in any app, as Finder's Recents lists them, read from
-  Spotlight (`server/recents.ts`, `GET /api/local/recents`). Opening one outside the open folder
+  Its Recents (see Folders) adds, below the files opened in the app, the files last opened on the machine in any
+  app, as Finder's Recents lists them, read from Spotlight on macOS (`recentFiles` in `server/recents.ts`). Opening one outside the open folder
   (`POST /api/local/open`) has the server ask `main.js` (a message to its parent) to open the file's own
   folder instead; the new window starts at `/open?file=…&from=recents` (`pages/OpenLocalFile.tsx`), which
   finds the file (`GET /api/local/resolve`) and makes Recents the first breadcrumb (`client/src/listing.ts`).
@@ -188,6 +196,14 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   names a `folder` (query or body) has it checked and put on `req.folder` by `requireUser`.
   `GET /api/folders/download?folder=` is a folder as a zip (`exportFolder` in `server/export.ts`), and a file
   dragged onto a folder in the list or the breadcrumbs is moved there (`FileLibrary`'s `onMove`).
+- Recents, a tab beside the folder's name on the home page (`/?recents=1`, `FileLibrary`'s `otherList`): the last
+  20 files the user opened, in any folder. Each page that shows a file reports it (`useRecentOpens`,
+  `POST /api/recents`) to `RecentOpens` (`server/recents.ts`), which names it by kind and id on the web and by
+  its absolute path in the desktop app (ids there are only the open folder's; the list is in the settings
+  database, for every folder). `GET /api/recents` lists them, forgetting web files that were deleted; in the
+  desktop app the page then asks `GET /api/recents/system` for Spotlight's (slow), shown below. Its last answer is
+  kept in the settings database and comes with `GET /api/recents` (`cached`), shown until the new one replaces it;
+  only without one is there a spinner.
 
 Checks: `npm run typecheck` and `npm test` (vitest). Both must pass before a change is finished.
 

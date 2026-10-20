@@ -327,6 +327,35 @@ describe('saved signatures', () => {
   });
 });
 
+describe('recents', () => {
+  it('lists the files each user last opened, newest first, and forgets one that was deleted', async () => {
+    const { cookie } = await signUp(app, box, 'recent@x.com');
+    const { cookie: other } = await signUp(app, box, 'recent2@x.com');
+    const sheet = (await app.inject({ method: 'POST', url: '/api/sheets', headers: { cookie }, payload: { title: 'Budget', folder: '' } })).json().sheet;
+    const csv = (await app.inject({ method: 'POST', url: '/api/sheets', headers: { cookie }, payload: { title: 'Prices', csv: 'a,b\n1,2\n' } })).json().sheet;
+    const opened = (kind: string, id: string, c = cookie) => app.inject({ method: 'POST', url: '/api/recents', headers: { cookie: c }, payload: { kind, id } });
+    const list = async (c = cookie) => (await app.inject({ method: 'GET', url: '/api/recents', headers: { cookie: c } })).json().files as { id: string; kind: string; name: string; format?: string; app?: boolean }[];
+    expect((await app.inject({ method: 'GET', url: '/api/recents' })).statusCode).toBe(401);
+    expect(await list()).toEqual([]);
+    expect((await opened('sheet', sheet.id)).statusCode).toBe(200);
+    expect((await opened('sheet', csv.id)).statusCode).toBe(200);
+    // Not another user's file, not one that is not there, not the wrong kind.
+    expect((await opened('sheet', sheet.id, other)).statusCode).toBe(404);
+    expect((await opened('doc', sheet.id)).statusCode).toBe(404);
+    expect((await opened('nope', sheet.id)).statusCode).toBe(400);
+    expect((await list()).map((f) => [f.name, f.kind, f.format ?? null, f.app])).toEqual([
+      ['Prices', 'sheet', 'csv', true],
+      ['Budget', 'sheet', null, true],
+    ]);
+    // Opened again: back to the top.
+    await opened('sheet', sheet.id);
+    expect((await list()).map((f) => f.id)).toEqual([sheet.id, csv.id]);
+    expect(await list(other)).toEqual([]);
+    await app.inject({ method: 'DELETE', url: `/api/sheets/${sheet.id}`, headers: { cookie } });
+    expect((await list()).map((f) => f.id)).toEqual([csv.id]);
+  });
+});
+
 describe('sheets', () => {
   it('requires auth', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/sheets' });

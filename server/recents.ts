@@ -1,10 +1,12 @@
 // The desktop app's "Recents": the files the person last opened on this Mac, in any app and any folder,
 // as Finder's Recents shows them. Spotlight keeps a "last used" date for a file each time it is opened;
 // this asks it for the files used lately (mdfind) and keeps the kinds the app can show. macOS only.
+// Above them come the files last opened in this app itself (RecentOpens), which the web app lists too.
 import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { DB } from './db.ts';
 
 export interface RecentFile {
   /** Absolute path. */
@@ -15,6 +17,8 @@ export interface RecentFile {
   /** When it was last opened, or for a download not opened since, when it arrived. */
   lastUsed: string;
   size: number;
+  /** Opened in this app (RecentOpens), not only known to Spotlight. */
+  app?: boolean;
 }
 
 export interface Recents {
@@ -110,4 +114,80 @@ export async function recentFiles(exts: ReadonlySet<string>, run: (home: string)
     }
   }
   return { files: out, blocked };
+}
+
+/** How many of the files a user opened in the app are kept. */
+export const APP_RECENTS = 20;
+const NEWEST = 'ORDER BY opened_at DESC, rowid DESC';
+
+/**
+ * The files each user last opened in the app, newest first: each file a page shows is recorded. A file is named
+ * by `ref`: on the web its kind and id ("doc:<id>"), in the desktop app its absolute path, since an id there is
+ * only the open folder's and the list is every folder's (kept in the app's settings database).
+ */
+export class RecentOpens {
+  private db: DB;
+
+  constructor(db: DB) {
+    this.db = db;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS recent_opens (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        ref TEXT NOT NULL,
+        opened_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, ref)
+      );
+      CREATE TABLE IF NOT EXISTS recents_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    `);
+  }
+
+  record(userId: string, ref: string, when = new Date()): void {
+    // Removed and added again, so that of two opened in the same instant the later is the newer (its rowid).
+    this.forget(userId, ref);
+    this.db.prepare('INSERT INTO recent_opens (user_id, ref, opened_at) VALUES (?, ?, ?)').run(userId, ref, when.toISOString());
+    this.db.prepare(`DELETE FROM recent_opens WHERE user_id = ? AND ref NOT IN (SELECT ref FROM recent_opens WHERE user_id = ? ${NEWEST} LIMIT ?)`).run(userId, userId, APP_RECENTS);
+  }
+
+  forget(userId: string, ref: string): void {
+    this.db.prepare('DELETE FROM recent_opens WHERE user_id = ? AND ref = ?').run(userId, ref);
+  }
+
+  /**
+   * The desktop app's last answer from Spotlight, which can take seconds: shown at once the next time, in any
+   * folder's window, while it is asked again.
+   */
+  systemCached(): Recents | null {
+    const row = this.db.prepare("SELECT value FROM recents_cache WHERE key = 'system'").get() as { value: string } | undefined;
+    try {
+      return row ? (JSON.parse(row.value) as Recents) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  cacheSystem(recents: Recents): void {
+    this.db.prepare("INSERT INTO recents_cache (key, value) VALUES ('system', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(recents));
+  }
+
+  list(userId: string): { ref: string; openedAt: string }[] {
+    return (this.db.prepare(`SELECT ref, opened_at FROM recent_opens WHERE user_id = ? ${NEWEST}`).all(userId) as { ref: string; opened_at: string }[]).map((r) => ({ ref: r.ref, openedAt: r.opened_at }));
+  }
+}
+
+/**
+ * The desktop app's: the files opened in the app that are still there. One that is gone stays recorded, in case
+ * it comes back (a drive, say).
+ */
+export async function openedFiles(opens: { ref: string; openedAt: string }[], exts: ReadonlySet<string>, home = homedir()): Promise<RecentFile[]> {
+  const out: RecentFile[] = [];
+  for (const r of opens) {
+    if (!exts.has(path.extname(r.ref).toLowerCase())) continue;
+    try {
+      const st = await stat(r.ref);
+      if (st.isFile()) out.push({ path: r.ref, name: path.basename(r.ref), where: whereOf(r.ref, home), lastUsed: r.openedAt, size: st.size, app: true });
+    } catch {
+      // Moved or deleted since.
+    }
+  }
+  return out;
 }

@@ -7,7 +7,7 @@ import type { SheetMeta, StoredFile, Workbook } from '../shared/types.ts';
 import { buildApp, LOCAL_COOKIE } from './app.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { LISTED_EXTS } from './localStore.ts';
-import { listable, parseRecents, recentFiles } from './recents.ts';
+import { APP_RECENTS, listable, openedFiles, parseRecents, recentFiles, RecentOpens } from './recents.ts';
 import { importXlsx } from './xlsxImport.ts';
 import { importPptx } from './pptxImport.ts';
 import { newId, type Deck, type TextElement } from '../shared/deck.ts';
@@ -473,8 +473,7 @@ describe('recents: the files last opened on the machine', () => {
       return { status: res.statusCode, body: res.json() as T };
     };
     try {
-      expect((await req<{ local: { recents: boolean } }>('GET', '/api/auth/me')).body.local.recents).toBe(true);
-      const list = await req<{ files: { path: string; name: string; kind: string; lastUsed: string }[]; blocked: string[] }>('GET', '/api/local/recents');
+      const list = await req<{ files: { path: string; name: string; kind: string; lastUsed: string }[]; blocked: string[] }>('GET', '/api/recents/system');
       expect(list.body.blocked).toEqual([]);
       // Newest first; what the app cannot show and what is gone are left out.
       expect(list.body.files.map((f) => [f.name, f.kind])).toEqual([
@@ -559,12 +558,80 @@ describe('recents: the files last opened on the machine', () => {
     }
   });
 
-  it('is not there without a source for it, or outside the desktop app', async () => {
+  it('lists the files opened in the app at once, and the ones Spotlight knows when asked', async () => {
+    const elsewhere = mkdtempSync(path.join(tmpdir(), 'sheetsweb-elsewhere-'));
+    const data = mkdtempSync(path.join(tmpdir(), 'sheetsweb-localdata-'));
+    mkdirSync(at('opened'), { recursive: true });
+    writeFileSync(at('opened', 'notes.md'), '# Notes\n');
+    writeFileSync(at('opened', 'scan.pdf'), '%PDF-1.4 test');
+    writeFileSync(path.join(elsewhere, 'plan.md'), '# Plan\n');
+    const spotlight = async () =>
+      [`${path.join(elsewhere, 'plan.md')}   kMDItemLastUsedDate = 2099-01-01 00:00:00 +0000`, `${at('opened', 'notes.md')}   kMDItemLastUsedDate = 2099-01-01 00:00:00 +0000`].join('\n');
+    const recent = await buildApp({ dataDir: data, local: { dir: folder, recents: () => recentFiles(LISTED_EXTS, spotlight, elsewhere) } });
+    const req = async <T>(method: 'GET' | 'POST', url: string, payload?: object) => (await recent.inject({ method, url, payload })).json() as T;
+    try {
+      for (const rel of ['opened/notes.md', 'opened/scan.pdf']) {
+        const { kind, id } = await req<{ kind: string; id: string }>('GET', `/api/local/resolve?file=${encodeURIComponent(rel)}`);
+        await req('POST', '/api/recents', { kind, id });
+      }
+      // The app's own come at once; Spotlight's are asked for after, and the page leaves out the ones already listed.
+      const mine = await req<{ files: { name: string; kind: string; app?: boolean }[]; system: boolean; cached?: unknown }>('GET', '/api/recents');
+      expect(mine.system).toBe(true);
+      expect(mine.cached).toBeUndefined();
+      expect(mine.files.map((f) => [f.name, f.kind, !!f.app])).toEqual([
+        ['scan.pdf', 'file', true],
+        ['notes.md', 'markdown', true],
+      ]);
+      const system = await req<{ files: { name: string; app?: boolean }[] }>('GET', '/api/recents/system');
+      expect(system.files.map((f) => [f.name, !!f.app])).toEqual([
+        ['plan.md', false],
+        ['notes.md', false],
+      ]);
+      // Its answer is kept, to be shown at once next time while Spotlight is asked again.
+      const again = await req<{ cached?: { files: { name: string; kind: string }[]; blocked: string[] } }>('GET', '/api/recents');
+      expect(again.cached?.files.map((f) => [f.name, f.kind])).toEqual([
+        ['plan.md', 'markdown'],
+        ['notes.md', 'markdown'],
+      ]);
+      expect(again.cached?.blocked).toEqual([]);
+    } finally {
+      await recent.close();
+      rmSync(data, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the last files opened in the app, and lists only the ones still there', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sheetsweb-opened-'));
+    try {
+      const db = new DatabaseSync(':memory:');
+      db.exec('CREATE TABLE users (id TEXT PRIMARY KEY)');
+      db.exec("INSERT INTO users VALUES ('local'), ('other')");
+      const kept = new RecentOpens(db);
+      const files = Array.from({ length: APP_RECENTS + 2 }, (_, i) => path.join(dir, `f${i}.md`));
+      files.forEach((f, i) => (writeFileSync(f, ''), kept.record('local', f, new Date(Date.UTC(2026, 0, 1, 0, i)))));
+      kept.record('other', files[0]);
+      // Opened again: back to the top.
+      kept.record('local', files[5], new Date(Date.UTC(2026, 1, 1)));
+      rmSync(files[APP_RECENTS + 1]);
+      const listed = (await openedFiles(kept.list('local'), new Set(['.md']), dir)).map((f) => path.basename(f.path));
+      expect(listed[0]).toBe('f5.md');
+      expect(listed).toHaveLength(APP_RECENTS - 1);
+      expect(listed).not.toContain('f0.md');
+      expect(listed).not.toContain('f1.md');
+      // Each user has their own.
+      expect(kept.list('other').map((r) => r.ref)).toEqual([files[0]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lists only what the app opened without Spotlight', async () => {
     const data = mkdtempSync(path.join(tmpdir(), 'sheetsweb-localdata-'));
     const none = await buildApp({ dataDir: data, local: { dir: folder, recents: null } });
     try {
-      expect(((await none.inject({ method: 'GET', url: '/api/auth/me' })).json() as { local: { recents: boolean } }).local.recents).toBe(false);
-      expect((await none.inject({ method: 'GET', url: '/api/local/recents' })).statusCode).toBe(404);
+      expect((await none.inject({ method: 'GET', url: '/api/recents' })).json()).toEqual({ files: [], system: false });
+      expect((await none.inject({ method: 'GET', url: '/api/recents/system' })).statusCode).toBe(404);
     } finally {
       await none.close();
       rmSync(data, { recursive: true, force: true });

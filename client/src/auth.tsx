@@ -8,7 +8,7 @@ interface AuthState {
   /** Whether the server offers "Continue with Google". */
   googleLogin: boolean;
   /** Set in the desktop app: the folder whose files are the library. There is no account to sign in or out of. */
-  local: { dir: string; /** Whether there is a list of the files last opened on this computer. */ recents?: boolean } | null;
+  local: { dir: string } | null;
   login(email: string, password: string): Promise<void>;
   /** Creates the account; the user is signed in by the link in the verification email, not here. */
   register(email: string, password: string): Promise<void>;
@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [googleLogin, setGoogleLogin] = useState(false);
-  const [local, setLocal] = useState<{ dir: string; recents?: boolean } | null>(null);
+  const [local, setLocal] = useState<{ dir: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;

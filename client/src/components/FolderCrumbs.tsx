@@ -14,8 +14,8 @@ export function FolderCrumbs({ folder, onLeave }: { folder?: string; onLeave?: (
   const root = local ? (local.dir.split(/[\\/]/).filter(Boolean).pop() ?? local.dir) : 'Your files';
   return (
     <nav className="folder-crumbs" aria-label="Folder">
-      {/* A file opened from the desktop app's Recents leads back there first. */}
-      {local?.recents && fromRecents() && (
+      {/* A file opened from Recents leads back there first. */}
+      {fromRecents() && (
         <span>
           <Link to={RECENTS_HREF} onClick={onLeave} title="Back to Recents">
             Recents

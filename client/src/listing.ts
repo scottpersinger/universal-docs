@@ -20,7 +20,7 @@ function last(): string {
   }
 }
 
-/** The desktop app's Recents list, when that is the list last shown. */
+/** The Recents list, when that is the list last shown. */
 export const RECENTS_PARAM = 'recents';
 export const RECENTS_HREF = `/?${RECENTS_PARAM}=1`;
 export const rememberRecents = (): void => rememberListing(`?${RECENTS_PARAM}=1`);

@@ -45,7 +45,7 @@ import { deckPreview, docPreview, markdownPreview, sheetPreview, type FilePrevie
 import { cleanFolderName, cleanFolderPath, folderName, joinFolder } from '../shared/folders.ts';
 import { FolderStore, type Folders } from './folders.ts';
 import { LISTED_EXTS, listedKind, LocalFileStore, LocalFolder, LocalFolders, LocalSheetStore } from './localStore.ts';
-import { recentFiles, recentsAvailable, type Recents } from './recents.ts';
+import { openedFiles, recentFiles, RecentOpens, recentsAvailable, type Recents } from './recents.ts';
 import { googleFromEnv, GoogleLogin, GoogleLoginError, GOOGLE_STATE_TTL_MS, type GoogleOptions } from './googleAuth.ts';
 import { mountPlugin } from '../plugin/server/mount.ts';
 import { mailerFromEnv, type Mailer } from './mail.ts';
@@ -143,7 +143,10 @@ export interface AppOptions {
     claudeAgent?: Partial<ClaudeAgentOptions>;
     /** Show how to connect an agent to the app's MCP server, in the desktop app's dialog. */
     connectAgent?: () => void;
-    /** The files last opened on this machine (server/recents.ts); null where there is no such list. Tests give their own. */
+    /**
+     * The files last opened on this machine, as Spotlight knows them (server/recents.ts); null where there is no
+     * such list. Recents lists them below the files opened in the app. Tests give their own.
+     */
     recents?: (() => Promise<Recents>) | null;
     /**
      * An MCP server for agents on this machine (server/localMcp.ts) at /mcp, for requests with this bearer
@@ -460,9 +463,12 @@ export async function buildApp(opts: AppOptions) {
     return { ok: true };
   });
 
-  // The desktop app's Recents: asked of the system unless the options say otherwise.
+  // Recents: the files each user opened in the app (in the desktop app kept with its settings, for every folder),
+  // and in the desktop app then the ones the system knows were opened lately, asked of Spotlight unless the
+  // options say otherwise.
+  const recentOpens = new RecentOpens(settingsDb);
   const recents = opts.local ? (opts.local.recents === undefined ? (recentsAvailable() ? () => recentFiles(LISTED_EXTS) : null) : opts.local.recents) : null;
-  app.get('/api/auth/me', async (req) => ({ user: req.user, googleLogin: !!google, ...(folder && req.user ? { local: { dir: folder.root, recents: !!recents } } : {}) }));
+  app.get('/api/auth/me', async (req) => ({ user: req.user, googleLogin: !!google, ...(folder && req.user ? { local: { dir: folder.root } } : {}) }));
 
   // Google sign-in: send the browser to Google; it comes back to the callback, which signs the user in.
   app.get('/api/auth/google/start', async (req, reply) => {
@@ -1288,11 +1294,55 @@ export async function buildApp(opts: AppOptions) {
       };
     });
 
-    // --- The desktop app's Recents: the files last opened on this machine, wherever they are ----------
-    r.get('/api/local/recents', async (_req, reply) => {
+    // --- Recents: the files the user last opened in the app, then (desktop app) on this machine ------
+    // A page reports each file it shows. On the web it is named by its kind and id, in the desktop app by its path.
+    r.post('/api/recents', async (req, reply) => {
+      const { kind, id } = (req.body ?? {}) as { kind?: unknown; id?: unknown };
+      const shown = typeof id === 'string' && (['doc', 'deck', 'sheet', 'markdown', 'file'] as const).find((k) => k === kind);
+      if (!shown) return reply.code(400).send({ error: 'Give the kind and id of the file opened.' });
+      const user = req.user!.id;
+      if (folder) {
+        const file = shown === 'file' ? (storedFiles as LocalFileStore).get(user, id as string)?.file : (sheets as LocalSheetStore).fileOf(user, id as string);
+        if (!file) return reply.code(404).send({ error: 'File not found' });
+        recentOpens.record(user, file);
+      } else {
+        if (!(shown === 'file' ? storedFiles.get(user, id as string) : sheets.get(user, id as string, shown))) return reply.code(404).send({ error: 'File not found' });
+        recentOpens.record(user, `${shown}:${id}`);
+      }
+      return { ok: true };
+    });
+
+    // The files opened in the app. `system` says there is also the slower list of /api/recents/system to ask for,
+    // and `cached` is its last answer, to show until the new one comes.
+    r.get('/api/recents', async (req) => {
+      const user = req.user!.id;
+      if (folder) {
+        const cached = recents ? recentOpens.systemCached() : null;
+        return { files: (await openedFiles(recentOpens.list(user), LISTED_EXTS)).map((f) => ({ ...f, kind: listedKind(f.path) })), system: !!recents, ...(cached ? { cached: { files: cached.files.map((f) => ({ ...f, kind: listedKind(f.path) })), blocked: cached.blocked } } : {}) };
+      }
+      // On the web a file that was deleted is gone for good: it is forgotten.
+      const files = [];
+      for (const { ref, openedAt } of recentOpens.list(user)) {
+        const [kind, id] = [ref.slice(0, ref.indexOf(':')), ref.slice(ref.indexOf(':') + 1)];
+        if (kind === 'file') {
+          const f = storedFiles.get(user, id);
+          if (f) files.push({ id, kind, name: f.meta.filename, folder: f.meta.folder ?? '', ...(f.meta.text ? { text: true } : {}), lastUsed: openedAt, size: f.meta.size, app: true });
+          else recentOpens.forget(user, ref);
+        } else {
+          const d = sheets.get(user, id, kind as DocKind);
+          if (d) files.push({ id, kind, name: d.title, folder: d.folder ?? '', ...(d.format ? { format: d.format } : {}), lastUsed: openedAt, app: true });
+          else recentOpens.forget(user, ref);
+        }
+      }
+      return { files, system: false };
+    });
+
+    // The desktop app's: the files last opened on this machine in any app, from Spotlight, which can take seconds.
+    r.get('/api/recents/system', async (_req, reply) => {
       if (!folder || !recents) return reply.code(404).send({ error: 'There is no list of recent files here.' });
-      const { files, blocked } = await recents();
-      return { files: files.map((f) => ({ ...f, kind: listedKind(f.path) })), blocked };
+      const found = await recents();
+      recentOpens.cacheSystem(found);
+      return { files: found.files.map((f) => ({ ...f, kind: listedKind(f.path) })), blocked: found.blocked };
     });
 
     // The file the window shows ({kind, id}, or nothing): what the MCP tools act on when no id is given.

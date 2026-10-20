@@ -441,6 +441,12 @@ export class LocalSheetStore extends SheetStore {
     return (this.db.prepare('SELECT id FROM sheets WHERE owner_id = ? AND file = ?').get(ownerId, rel) as { id: string } | undefined)?.id ?? null;
   }
 
+  /** The absolute path of a document's file, or null when there is no such document. */
+  fileOf(ownerId: string, id: string): string | null {
+    const r = this.row(ownerId, id);
+    return r ? this.folder.abs(r.file) : null;
+  }
+
   /** A row is only as good as its file: one that was removed is gone, one that was edited has a new time. */
   protected override row(ownerId: string, id: string, kind?: DocKind): SheetRow | undefined {
     const r = super.row(ownerId, id, kind);

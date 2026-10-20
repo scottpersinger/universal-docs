@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { isHtmlName, type DeletedFile, type StoredFile } from '../../../shared/types.ts';
 import { AgentButton } from '../agent/AgentPanel.tsx';
 import { useAgent } from '../agent/AgentProvider.tsx';
-import { api, type FolderInfo } from '../api.ts';
+import { api, type FolderInfo, type RecentFile } from '../api.ts';
 import { useAuth } from '../auth.tsx';
 import { Account } from '../components/Account.tsx';
 import { FileLibrary, formatWhen, kindIcon, type LibraryItem } from '../components/FileLibrary.tsx';
@@ -34,7 +34,7 @@ const fileItem = (x: StoredFile): LibraryItem => ({ id: x.id, title: x.filename,
 const dirName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
 export function HomePage() {
-  const { local } = useAuth();
+  const { local, user } = useAuth();
   const navigate = useNavigate();
   useFavicon('home');
   // The folder being shown is part of the address (/?folder=reports/2026), so Back and links work.
@@ -56,9 +56,11 @@ export function HomePage() {
       },
       { replace: true },
     );
-  // The desktop app's Recents (&recents=1): the files last opened on this computer, in any app, listed in
-  // place of the folder's. Opening one that is in another folder makes that folder the open one.
-  const recents = !!local?.recents && params.get(RECENTS_PARAM) === '1';
+  // Recents (&recents=1), listed in place of the folder's: the files last opened in the app, and in the desktop
+  // app then the ones last opened on this computer in any app. There a file of Recents is named by its path,
+  // and opening one that is in another folder makes that folder the open one.
+  const recents = params.get(RECENTS_PARAM) === '1';
+  const elsewhere = recents && !!local;
   const showRecents = (on: boolean) =>
     setParams((cur) => {
       const next = new URLSearchParams(cur);
@@ -66,27 +68,60 @@ export function HomePage() {
       else next.delete(RECENTS_PARAM);
       return next;
     });
-  const [recentFiles, setRecentFiles] = useState<{ items: LibraryItem[]; where: Map<string, string>; blocked: string[] } | null>(null);
+  const [recentFiles, setRecentFiles] = useState<{ items: LibraryItem[]; where: Map<string, string>; app: Set<string>; blocked: string[] } | null>(null);
+  // The desktop app's files from Spotlight, which can take seconds: the app's own (and Spotlight's last answer) are shown while it looks.
+  const [recentsSearching, setRecentsSearching] = useState(false);
   const [recentsError, setRecentsError] = useState<string | null>(null);
   const [openingRecent, setOpeningRecent] = useState<string | null>(null);
   useEffect(() => {
     if (!recents) return;
     let gone = false;
     setRecentsError(null);
+    setRecentsSearching(false);
+    const fail = (e: unknown) => !gone && (setRecentsError(e instanceof Error ? e.message : String(e)), setRecentsSearching(false));
+    // In the desktop app a file of Recents is named by its path: it has no id here until its folder is the open one.
+    const keyOf = (f: RecentFile) => f.id ?? f.path ?? '';
+    const itemOf = (f: RecentFile): LibraryItem => ({
+      id: keyOf(f),
+      kind: f.kind,
+      ...(f.format ? { format: f.format } : /\.csv$/i.test(f.name) && f.path ? { format: 'csv' as const } : {}),
+      ...(f.text ? { text: true } : {}),
+      ...(f.folder ? { folder: f.folder } : {}),
+      title: f.name,
+      updatedAt: f.lastUsed,
+      createdAt: f.lastUsed,
+    });
+    const whereOf = (f: RecentFile) => f.where ?? (f.folder ? f.folder : 'Your files');
     api
-      .localRecents()
-      .then((r) => {
+      .recents()
+      .then((mine) => {
         if (gone) return;
-        // A file of Recents is named by its path: it has no id here until its folder is the open one.
-        const items = r.files.map((f): LibraryItem => ({ id: f.path, kind: f.kind, ...(/\.csv$/i.test(f.name) ? { format: 'csv' as const } : {}), title: f.name, updatedAt: f.lastUsed, createdAt: f.lastUsed }));
-        setRecentFiles({ items, where: new Map(r.files.map((f) => [f.path, f.where])), blocked: r.blocked });
+        const app = new Set(mine.files.map(keyOf));
+        // The app's own first, then the system's that are not among them.
+        const show = (system?: { files: RecentFile[]; blocked: string[] }) => {
+          const all = [...mine.files, ...(system?.files ?? []).filter((f) => !app.has(keyOf(f)))];
+          setRecentFiles({ items: all.map(itemOf), where: new Map(all.map((f) => [keyOf(f), whereOf(f)])), app, blocked: system?.blocked ?? [] });
+        };
+        // Spotlight's last answer is shown until the new one comes; without one, a spinner says it is coming.
+        show(mine.cached);
+        if (!mine.system) return;
+        setRecentsSearching(!mine.cached);
+        return api.recentsSystem().then((system) => {
+          if (gone) return;
+          show(system);
+          setRecentsSearching(false);
+        });
       })
-      .catch((e: unknown) => !gone && (setRecentFiles({ items: [], where: new Map(), blocked: [] }), setRecentsError(e instanceof Error ? e.message : String(e))));
+      .catch((e: unknown) => {
+        if (!gone) setRecentFiles((cur) => cur ?? { items: [], where: new Map(), app: new Set(), blocked: [] });
+        fail(e);
+      });
     return () => {
       gone = true;
     };
   }, [recents]);
   const openRecent = async (s: LibraryItem) => {
+    if (!local) return navigate(pathOf(s));
     if (openingRecent) return;
     setOpeningRecent(s.title);
     setRecentsError(null);
@@ -279,14 +314,22 @@ export function HomePage() {
       folders={recents ? [] : folders}
       onOpenFolder={openFolder}
       otherList={
-        local?.recents
+        user
           ? {
               label: 'Recents',
               active: recents,
               onSelect: showRecents,
               where: (s) => recentFiles?.where.get(s.id) ?? '',
+              // The files opened in this app come first, then the ones Spotlight knows were opened elsewhere.
+              first: (s) => !!recentFiles?.app.has(s.id),
+              footer: recentsSearching ? (
+                <div className="list-more" role="status">
+                  <div className="spinner" />
+                  Looking for files opened in other apps…
+                </div>
+              ) : undefined,
               when: 'Last opened',
-              empty: 'No file this app can show was opened lately.',
+              empty: local ? 'No file this app can show was opened lately.' : 'The files you open show here.',
               notice: (
                 <>
                   {openingRecent && (
@@ -306,12 +349,12 @@ export function HomePage() {
             }
           : undefined
       }
-      // A file of Recents is somewhere else: no thumbnail, folder or row menu until its folder is open.
-      thumbnail={recents ? undefined : (s) => <FileThumb item={s} />}
+      // A file of the desktop app's Recents is somewhere else: no thumbnail, folder or row menu until its folder is open.
+      thumbnail={elsewhere ? undefined : (s) => <FileThumb item={s} />}
       // Documents, presentations, spreadsheets and web pages show in their own page, drawn small; a picture,
       // video or PDF is quicker as its thumbnail, which shows it just as well.
       preview={
-        recents
+        elsewhere
           ? undefined
           : (s) => (s.kind === 'file' && !isHtmlName(s.title) && !s.text ? <FileThumb item={s} /> : <FilePreviewFrame href={pathOf(s)} title={s.title} text={s.kind === 'doc' || s.kind === 'markdown' || s.kind === 'sheet' || !!s.text} />)
       }
@@ -421,8 +464,8 @@ export function HomePage() {
       importing={importing}
       onImport={(file) => void importFile(file)}
       onOpen={(s) => (recents ? void openRecent(s) : navigate(pathOf(s)))}
-      onOpenInNewTab={recents ? undefined : (s) => void window.open(pathOf(s), '_blank')}
-      titleLink={recents ? undefined : (s, children) => (
+      onOpenInNewTab={elsewhere ? undefined : (s) => void window.open(pathOf(s), '_blank')}
+      titleLink={elsewhere ? undefined : (s, children) => (
         <Link to={pathOf(s)} className="sheet-title" onClick={(e) => e.stopPropagation()}>
           {children}
         </Link>

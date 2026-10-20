@@ -98,15 +98,24 @@ export interface SavedSignature {
 /** `&folder=...` (or `?folder=...`) for an upload that goes into a folder; nothing at the top. */
 const inFolder = (folder: string | undefined, first = false) => (folder ? `${first ? '?' : '&'}folder=${encodeURIComponent(folder)}` : '');
 
-/** A file of the desktop app's Recents list. */
+/** A file of Recents. */
 export interface RecentFile {
-  path: string;
+  /** On the web: the file's id. */
+  id?: string;
+  /** In the desktop app: its absolute path (it has no id until its folder is the open one). */
+  path?: string;
   name: string;
-  /** The folder it is in, with the home directory written "~". */
-  where: string;
+  /** In the desktop app: the folder it is in, with the home directory written "~". */
+  where?: string;
+  /** On the web: the library folder it is in ('' at the top). */
+  folder?: string;
+  format?: SheetMeta['format'];
+  text?: boolean;
   lastUsed: string;
-  size: number;
+  size?: number;
   kind: SheetMeta['kind'] | 'file';
+  /** Opened in this app: listed ahead of what the system knows was opened. */
+  app?: boolean;
 }
 
 export const api = {
@@ -162,9 +171,20 @@ export const api = {
   /** A Word, Excel or PowerPoint file in a zip, converted to be shown read-only. */
   zipOfficeView: (id: string, path: string) => request<{ view: ZipOfficeView }>('GET', `/api/files/${encodeURIComponent(id)}/zip/view?path=${encodeURIComponent(path)}`),
   deleteFile: (id: string) => request<{ ok: true }>('DELETE', `/api/files/${encodeURIComponent(id)}`),
-  me: () => request<{ user: User | null; googleLogin: boolean; local?: { dir: string; recents?: boolean } }>('GET', '/api/auth/me'),
-  /** The desktop app: the files last opened on this computer, in any app (server/recents.ts). */
-  localRecents: () => request<{ files: RecentFile[]; /** Folders macOS does not let the app read. */ blocked: string[] }>('GET', '/api/local/recents'),
+  me: () => request<{ user: User | null; googleLogin: boolean; local?: { dir: string } }>('GET', '/api/auth/me'),
+  /** Recents: the files last opened in the app (server/recents.ts). */
+  recents: () =>
+    request<{
+      files: RecentFile[];
+      /** Whether there is also recentsSystem to ask for (the desktop app). */
+      system: boolean;
+      /** recentsSystem's last answer, to show until it answers again. */
+      cached?: { files: RecentFile[]; blocked: string[] };
+    }>('GET', '/api/recents'),
+  /** The desktop app: the files last opened on this computer in any app, from Spotlight (slow). */
+  recentsSystem: () => request<{ files: RecentFile[]; /** Folders macOS does not let the app read. */ blocked: string[] }>('GET', '/api/recents/system'),
+  /** Tell the server a page shows this file, for Recents. */
+  opened: (kind: RecentFile['kind'], id: string) => request<{ ok: true }>('POST', '/api/recents', { kind, id }),
   /** Open one of them: answers with its path in the open folder, or that the app is switching to the file's folder. */
   /** The desktop app: the file the window shows, for the MCP tools to act on (server/localMcp.ts); null for none. */
   localShowing: (file: { kind: 'doc' | 'deck' | 'sheet' | 'markdown' | 'file'; id: string } | null, window?: string) => request<{ ok: true }>('POST', '/api/local/showing', { ...(file ?? {}), ...(window ? { window } : {}) }),
