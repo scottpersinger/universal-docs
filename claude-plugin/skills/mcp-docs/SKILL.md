@@ -8,7 +8,7 @@ description: "Use the MCP Docs desktop app (its mcp-docs MCP server) to open, re
 MCP Docs is a desktop app (macOS) that edits the office files in a folder on this Mac: Word documents,
 PowerPoint presentations, Excel spreadsheets, Markdown and CSV files, PDFs, pictures and videos. The person
 opens a folder in the app; its files are the library, and its subfolders are the library's folders. The app
-is also an MCP server for agents on the same machine, `mcp-docs` in this plugin, so you and the person work on
+is also an MCP server for agents on the same machine, `mcp-docs` in this plugin (for Claude Code and Codex), so you and the person work on
 the same files: what you open is shown in the app's window, and your edits appear there as you make them,
 undoable like the person's own.
 
@@ -17,12 +17,13 @@ undoable like the person's own.
 The server is the app itself, at `http://127.0.0.1:39217/mcp`. It only answers while the app is running.
 
 - **Tools missing or failing to connect:** the app is probably not running. Start it with
-  `open -a "MCP Docs"`, then ask the person to run `/mcp` and reconnect `mcp-docs` (or just retry the tool).
+  `open -a "MCP Docs"`, then retry the tool, or ask the person to reconnect `mcp-docs` (`/mcp` in Claude Code).
+  In Codex, check it with `codex mcp list`.
 - **Not installed** (`open -a` says it cannot find the app): ask the person to run `npx @scottpersinger/mcp-docs`, which
   installs the latest app and this plugin.
-- **Signing in:** the first time, `/mcp` signs in with OAuth. The app shows a dialog asking the person to
-  allow the agent; nothing is entered in the browser. If a tool says the token was refused, have them run
-  `/mcp` again.
+- **Signing in:** the first time, the agent signs in with OAuth: `/mcp` in Claude Code, `codex mcp login mcp-docs`
+  in Codex. The app shows a dialog asking the person to allow the agent; nothing is entered in the browser. If a
+  tool says the token was refused, have them sign in again the same way.
 - **Port in use:** if another copy of the app holds the port, the app says so in File › Connect an Agent.
   Quit the other copy and start the app again.
 - The person can see and disconnect connected agents in File › Connect an Agent (MCP)… in the app.

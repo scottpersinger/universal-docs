@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// `npx @scottpersinger/mcp-docs`: install (or update) the MCP Docs desktop app from the latest GitHub release, then the
-// Claude Code plugin that connects Claude Code to it (the claude-plugin folder of the same repository,
-// whose marketplace is .claude-plugin/marketplace.json there). With --uninstall, remove all of it again: the
-// app, its data and settings, and what it added to Claude Code.
+// `npx @scottpersinger/mcp-docs`: install (or update) the MCP Docs desktop app from the latest GitHub release, then,
+// for each coding agent found (Claude Code, Codex) that the person wants it for, the plugin that connects the agent
+// to it: the claude-plugin folder of the same repository, which is both a Claude Code plugin (its marketplace is
+// .claude-plugin/marketplace.json there) and a Codex plugin (.agents/plugins/marketplace.json). Any other MCP client
+// can connect to the app's address itself. With --uninstall, remove all of it again: the app, its data and settings,
+// and what it added to the agents.
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants, createWriteStream, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -16,23 +18,29 @@ const APP_NAME = 'MCP Docs';
 const ASSET = /^MCP-Docs-(\d+\.\d+\.\d+)-mac-arm64\.zip$/;
 const MARKETPLACE = 'mcp-docs';
 const PLUGIN = `mcp-docs@${MARKETPLACE}`;
+/** The app's MCP server (desktop/main.js's fixed port), for any MCP client. */
+const MCP_URL = 'http://127.0.0.1:39217/mcp';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
 
 if (flag('help') || flag('h') || args.some((a) => !a.startsWith('--'))) {
-  console.log(`Usage: npx @scottpersinger/mcp-docs [--skip-app] [--skip-plugin]
+  console.log(`Usage: npx @scottpersinger/mcp-docs [--claude] [--codex] [--skip-app] [--skip-plugins] [--yes]
        npx @scottpersinger/mcp-docs --uninstall [--yes]
 
-Installs the latest MCP Docs desktop app into /Applications (or ~/Applications), and the mcp-docs
-plugin into Claude Code, which connects Claude Code to the app. Run it again to update both.
+Installs the latest MCP Docs desktop app into /Applications (or ~/Applications), and the mcp-docs plugin
+into the coding agents you choose, Claude Code and Codex, which connects them to the app. It asks for each
+agent it finds. Run it again to update them all. Any other MCP client can connect to the app at
+${MCP_URL}.
 
-  --skip-app      only install or update the Claude Code plugin
-  --skip-plugin   only install or update the app
+  --claude        add the plugin to Claude Code (without asking; the other agents only if named too)
+  --codex         add the plugin to Codex (likewise)
+  --skip-app      only install or update the plugins
+  --skip-plugins  only install or update the app
   --uninstall     remove the app, its data and settings (chats, API keys, connected agents), and the
-                  mcp-docs plugin, marketplace and MCP server from Claude Code. Your documents, in the
-                  folders you opened, are not touched. It lists what it will remove and asks first.
-  --yes           with --uninstall, do not ask`);
+                  mcp-docs plugin, marketplace and MCP server from Claude Code and Codex. Your documents,
+                  in the folders you opened, are not touched. It lists what it will remove and asks first.
+  --yes           do not ask: add the plugin to every agent found, or with --uninstall remove everything`);
   process.exit(args.some((a) => !a.startsWith('--')) ? 1 : 0);
 }
 
@@ -139,12 +147,67 @@ function claude(argv) {
   return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
 }
 
-function installPlugin() {
-  say('\nClaude Code plugin');
-  if (run('claude', ['--version']).status !== 0) {
-    say('  Claude Code was not found (the `claude` command). Install it, then run `npx @scottpersinger/mcp-docs --skip-app`.');
-    return false;
+/** Run `codex` with these arguments, as `claude` above. */
+function codex(argv) {
+  const r = run('codex', argv);
+  return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
+}
+
+/**
+ * The coding agents the plugin is for: their command, how to install it there (which says whether it was 'installed'
+ * or 'updated'), and what to do next. An update keeps the agent's sign-in; only a new install needs one.
+ */
+const AGENTS = [
+  {
+    key: 'claude',
+    name: 'Claude Code',
+    found: () => run('claude', ['--version']).status === 0,
+    install: installClaudePlugin,
+    next: {
+      installed: 'In Claude Code: restart it (or start a new session) to load the plugin, then run /mcp, choose plugin:mcp-docs:mcp-docs and sign in.',
+      updated: 'In Claude Code: restart it (or start a new session) to load the new version.',
+    },
+  },
+  {
+    key: 'codex',
+    name: 'Codex',
+    found: () => run('codex', ['--version']).status === 0,
+    install: installCodexPlugin,
+    next: {
+      installed: 'In Codex: sign in once with `codex mcp login mcp-docs`, then start a new session.',
+      updated: 'In Codex: start a new session to load the new version.',
+    },
+  },
+];
+
+/** Ask a yes-or-no question; Enter is yes. */
+async function confirm(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question(`${question} [Y/n] `)).trim().toLowerCase();
+  rl.close();
+  return answer === '' || answer === 'y' || answer === 'yes';
+}
+
+/**
+ * The agents to add the plugin to: the ones named (--claude, --codex), else each one found that the person
+ * says yes to (all of them with --yes, or when there is no one to ask).
+ */
+async function chooseAgents() {
+  const named = AGENTS.filter((a) => flag(a.key));
+  const candidates = named.length ? named : AGENTS;
+  const chosen = [];
+  for (const agent of candidates) {
+    if (!agent.found()) {
+      if (named.length) say(`\n${agent.name} was not found (the \`${agent.key}\` command). Install it, then run \`npx @scottpersinger/mcp-docs --skip-app --${agent.key}\`.`);
+      continue;
+    }
+    if (named.length || flag('yes') || !process.stdin.isTTY || (await confirm(`\nAdd the MCP Docs plugin to ${agent.name}?`))) chosen.push(agent);
   }
+  return chosen;
+}
+
+function installClaudePlugin() {
+  say('\nClaude Code plugin');
   const listed = claude(['plugin', 'marketplace', 'list', '--json']);
   let known = false;
   try {
@@ -177,7 +240,35 @@ function installPlugin() {
     say('  You also added the mcp-docs server by hand before. The plugin has its own now; remove that one with:');
     say('    claude mcp remove mcp-docs --scope user');
   }
-  return true;
+  return installed ? 'updated' : 'installed';
+}
+
+function installCodexPlugin() {
+  say('\nCodex plugin');
+  let known = false;
+  try {
+    known = JSON.parse(codex(['plugin', 'marketplace', 'list', '--json']).out).marketplaces.some((m) => m.name === MARKETPLACE);
+  } catch {
+    // Unreadable: add it, which says so if it is there already.
+  }
+  if (known) {
+    const up = codex(['plugin', 'marketplace', 'upgrade', MARKETPLACE]);
+    if (!up.ok) say(`  Could not refresh the ${MARKETPLACE} marketplace: ${up.out}`);
+  } else {
+    // Only the plugin's folders are checked out, not the whole app.
+    const add = codex(['plugin', 'marketplace', 'add', REPO, '--sparse', '.agents', '--sparse', 'claude-plugin']);
+    if (!add.ok && !/already/i.test(add.out)) fail(`Could not add the ${MARKETPLACE} marketplace to Codex:\n${add.out}`);
+  }
+  let installed = false;
+  try {
+    installed = JSON.parse(codex(['plugin', 'list', '--json']).out).installed.some((p) => p.pluginId === PLUGIN);
+  } catch {
+    // Added below either way: adding it again installs the marketplace's version.
+  }
+  const step = codex(['plugin', 'add', PLUGIN]);
+  if (!step.ok) fail(`Could not ${installed ? 'update' : 'install'} the ${PLUGIN} plugin in Codex:\n${step.out}`);
+  say(`  ${installed ? 'Updated' : 'Installed'} the ${PLUGIN} plugin.`);
+  return installed ? 'updated' : 'installed';
 }
 
 // --- Uninstall ------------------------------------------------------------------------------------------
@@ -222,16 +313,37 @@ function claudeThings() {
   return { plugin, marketplace, servers };
 }
 
+/** What it added to Codex: the plugin and its marketplace. */
+function codexThings() {
+  if (run('codex', ['--version']).status !== 0) return { plugin: false, marketplace: false };
+  let plugin = false;
+  let marketplace = false;
+  try {
+    plugin = JSON.parse(codex(['plugin', 'list', '--json']).out).installed.some((p) => p.pluginId === PLUGIN);
+  } catch {
+    plugin = false;
+  }
+  try {
+    marketplace = JSON.parse(codex(['plugin', 'marketplace', 'list', '--json']).out).marketplaces.some((m) => m.name === MARKETPLACE);
+  } catch {
+    marketplace = false;
+  }
+  return { plugin, marketplace };
+}
+
 async function uninstall() {
   const apps = installedApps();
   const data = appData();
   const fromClaude = claudeThings();
+  const fromCodex = codexThings();
   const lines = [
     ...apps.map((a) => `  the app: ${a}`),
     ...data.map((d) => `  its data: ${d.replace(homedir(), '~')}`),
     ...(fromClaude.plugin ? [`  the ${PLUGIN} plugin in Claude Code`] : []),
     ...(fromClaude.marketplace ? [`  the ${MARKETPLACE} plugin marketplace in Claude Code`] : []),
     ...fromClaude.servers.map((s) => `  the ${s} MCP server in Claude Code`),
+    ...(fromCodex.plugin ? [`  the ${PLUGIN} plugin in Codex`] : []),
+    ...(fromCodex.marketplace ? [`  the ${MARKETPLACE} plugin marketplace in Codex`] : []),
   ];
   if (!lines.length) {
     say(`\nThere is nothing of ${APP_NAME} to remove.`);
@@ -260,18 +372,26 @@ async function uninstall() {
   }
   if (fromClaude.plugin) {
     const r = claude(['plugin', 'uninstall', PLUGIN]);
-    say(r.ok ? `  Uninstalled the ${PLUGIN} plugin` : `  Could not uninstall the ${PLUGIN} plugin: ${r.out}`);
+    say(r.ok ? `  Uninstalled the ${PLUGIN} plugin from Claude Code` : `  Could not uninstall the ${PLUGIN} plugin from Claude Code: ${r.out}`);
   }
   if (fromClaude.marketplace) {
     const r = claude(['plugin', 'marketplace', 'remove', MARKETPLACE]);
-    say(r.ok ? `  Removed the ${MARKETPLACE} marketplace` : `  Could not remove the ${MARKETPLACE} marketplace: ${r.out}`);
+    say(r.ok ? `  Removed the ${MARKETPLACE} marketplace from Claude Code` : `  Could not remove the ${MARKETPLACE} marketplace from Claude Code: ${r.out}`);
   }
   for (const s of fromClaude.servers) {
     // Added for the user (File › Connect an Agent's command), or for one project.
     const r = claude(['mcp', 'remove', s, '--scope', 'user']).ok ? { ok: true } : claude(['mcp', 'remove', s]);
     say(r.ok ? `  Removed the ${s} MCP server` : `  Could not remove the ${s} MCP server: ${r.out}`);
   }
-  say(`\n${APP_NAME} is uninstalled. Restart Claude Code to let go of the plugin.`);
+  if (fromCodex.plugin) {
+    const r = codex(['plugin', 'remove', PLUGIN]);
+    say(r.ok ? `  Uninstalled the ${PLUGIN} plugin from Codex` : `  Could not uninstall the ${PLUGIN} plugin from Codex: ${r.out}`);
+  }
+  if (fromCodex.marketplace) {
+    const r = codex(['plugin', 'marketplace', 'remove', MARKETPLACE]);
+    say(r.ok ? `  Removed the ${MARKETPLACE} marketplace from Codex` : `  Could not remove the ${MARKETPLACE} marketplace from Codex: ${r.out}`);
+  }
+  say(`\n${APP_NAME} is uninstalled. Restart Claude Code and Codex to let go of the plugin.`);
 }
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
@@ -286,17 +406,16 @@ if (flag('uninstall')) {
 
 say(`MCP Docs installer (${REPO})`);
 const app = flag('skip-app') ? installedApp()?.app : await installApp();
-const plugin = flag('skip-plugin') ? false : installPlugin();
+// --skip-plugin is the flag's name before Codex.
+const agents = flag('skip-plugins') || flag('skip-plugin') ? [] : await chooseAgents();
+const done = agents.map((agent) => ({ agent, step: agent.install() }));
 
 if (app && !appPids(app).length) {
   // The MCP server is the running app.
   run('open', ['-a', app]);
   say(`\nStarted ${APP_NAME}.`);
 }
-if (plugin) {
-  say(`
-Next, in Claude Code:
-  1. Restart Claude Code (or start a new session) to load the plugin.
-  2. Run /mcp, choose plugin:mcp-docs:mcp-docs, and sign in. ${APP_NAME} asks you to allow it.
-${APP_NAME} must be running for Claude Code to reach it.`);
-}
+say(`
+${APP_NAME}'s MCP server is at ${MCP_URL} while the app is running. Any MCP client on this Mac that
+supports streamable HTTP and OAuth can connect to it there; ${APP_NAME} asks you to allow each one.`);
+if (done.length) say(`\nNext:\n${done.map(({ agent, step }) => `  - ${agent.next[step]}`).join('\n')}`);

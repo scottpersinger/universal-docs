@@ -22,8 +22,10 @@ MCP Docs is a universal document editor for all standard office document types, 
 npx @scottpersinger/mcp-docs
 ```
 
-This downloads the latest MCP Docs into `/Applications`, installs the **mcp-docs** plugin into Claude Code (the app's
-MCP server and a skill on using it), and starts the app. Run it again to update both. You can also download the app
+This downloads the latest MCP Docs into `/Applications`, offers to install the **mcp-docs** plugin (the app's MCP
+server and a skill on using it) into Claude Code and Codex, whichever you have, starts the app, and prints the app's
+MCP address for any other client. Run it again to update everything. `--claude` or `--codex` picks the agents without
+asking, `--yes` takes every one found. You can also download the app
 from the [latest release](https://github.com/scottpersinger/universal-docs/releases/latest); its notes say how to
 install it by hand. It needs a Mac with Apple silicon.
 
@@ -42,6 +44,9 @@ While the app runs it is an MCP server at `http://127.0.0.1:39217/mcp` (Streamab
   and sign in; MCP Docs asks you to allow it. In Claude Code the plugin alone is
   `/plugin install mcp-docs --marketplace scottpersinger/universal-docs`, or add the server without it:
   `claude mcp add --scope user --transport http mcp-docs http://127.0.0.1:39217/mcp`.
+- **Codex**: the installer adds the same plugin from the repository's Codex marketplace (`.agents/plugins/marketplace.json`).
+  Sign in once with `codex mcp login mcp-docs` and start a new session; MCP Docs asks you to allow it. By hand:
+  `codex plugin marketplace add scottpersinger/universal-docs` and `codex plugin add mcp-docs@mcp-docs`.
 - **Any other MCP client**: point it at the same address. It signs in with OAuth 2.1 (dynamic client registration
   and PKCE, as MCP clients do), and MCP Docs shows a dialog asking you to allow each client; nothing is typed into a
   browser.
@@ -116,8 +121,8 @@ The packaged app holds the server's TypeScript as plain files (`asar` is off), w
 
 1. Write what is new in `release-notes/<version>.md` (a Markdown list; `release-notes/template.md` adds the install
    steps).
-2. `npm run release -- <version>` sets the version of the app, the Claude Code plugin (`claude-plugin/`), its
-   marketplace entry (`.claude-plugin/marketplace.json`) and the installer (`installer/`, the `@scottpersinger/mcp-docs`
+2. `npm run release -- <version>` sets the version of the app, the Claude Code and Codex plugin (`claude-plugin/`), its
+   Claude marketplace entry (`.claude-plugin/marketplace.json`) and the installer (`installer/`, the `@scottpersinger/mcp-docs`
    npm package), commits that and tags it `desktop-v<version>`.
 3. `git push origin main desktop-v<version>`. The workflow checks, builds the app on Apple silicon, makes the GitHub
    release with its zip and publishes the installer to npm (trusted publishing: no npm token or one-time code).

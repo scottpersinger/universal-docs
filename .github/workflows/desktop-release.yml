@@ -31,7 +31,7 @@ jobs:
         run: |
           v=$(node -p "require('./package.json').version")
           echo "VERSION=$v" >> "$GITHUB_ENV"
-          for f in installer/package.json claude-plugin/.claude-plugin/plugin.json; do
+          for f in installer/package.json claude-plugin/.claude-plugin/plugin.json claude-plugin/.codex-plugin/plugin.json; do
             [ "$(node -p "require('./$f').version")" = "$v" ] || { echo "::error::$f is not $v"; exit 1; }
           done
           [ "$(node -p "require('./.claude-plugin/marketplace.json').plugins.find(p => p.name === 'mcp-docs').version")" = "$v" ] \

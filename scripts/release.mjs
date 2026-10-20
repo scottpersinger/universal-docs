@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Starts a desktop release: `npm run release -- 0.3.0`.
-// Sets the version of the app, the Claude Code plugin, its marketplace entry and the installer, commits that with
+// Sets the version of the app, the Claude Code and Codex plugin, its Claude marketplace entry and the installer, commits that with
 // the release notes (release-notes/<version>.md, which you write first) and tags it desktop-v<version>. Pushing the
 // tag runs .github/workflows/desktop-release.yml, which builds the app, makes the GitHub release and publishes the
 // installer to npm.
@@ -36,10 +36,11 @@ function setVersion(file, count = 1) {
 setVersion('package.json');
 setVersion('package-lock.json', 2); // the lock file's own and the root package's
 setVersion('claude-plugin/.claude-plugin/plugin.json');
+setVersion('claude-plugin/.codex-plugin/plugin.json');
 setVersion('.claude-plugin/marketplace.json'); // its one plugin, mcp-docs
 setVersion('installer/package.json');
 
-git('add', 'package.json', 'package-lock.json', 'claude-plugin/.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'installer/package.json', notes);
+git('add', 'package.json', 'package-lock.json', 'claude-plugin/.claude-plugin/plugin.json', 'claude-plugin/.codex-plugin/plugin.json', '.claude-plugin/marketplace.json', 'installer/package.json', notes);
 git('commit', '-q', '-m', `Desktop ${version}, plugin ${version}`);
 git('tag', tag);
 console.log(`Committed and tagged ${tag}. To publish it:\n\n  git push origin main ${tag}\n`);
