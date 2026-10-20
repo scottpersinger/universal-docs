@@ -96,9 +96,16 @@ export function insertItems(host: CommandHost): MenuItem[] {
     { label: `Insert ${plural(s.nCols, 'column')} right`, action: () => ctl.insertCols('right') },
     'sep',
     { label: 'Upload image in cell…', action: () => void uploadImage(host) },
+    { label: 'Chart', action: () => insertChart(host) },
     'sep',
     { label: 'New sheet tab', shortcut: `${SHIFT}F11`, action: () => ctl.addTab() },
   ];
+}
+
+/** Chart the selection (or the data around the active cell) and open the chart editor. */
+export function insertChart(host: CommandHost): void {
+  const problem = host.ctl.insertChart();
+  if (problem) host.notify(problem);
 }
 
 /** Pick an image file and place it in the active cell. */
@@ -289,6 +296,7 @@ export function cellContextItems(host: CommandHost, kind: 'cell' | 'row' | 'col'
     delCol,
     { label: 'Delete values', action: () => ctl.clearSelection() },
     { label: 'Upload image in cell…', action: () => void uploadImage(host) },
+    { label: 'Chart', action: () => insertChart(host) },
     'sep',
     { label: 'Sort range A → Z', action: () => ctl.sortSelection(true) },
     { label: 'Sort range Z → A', action: () => ctl.sortSelection(false) },

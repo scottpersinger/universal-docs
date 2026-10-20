@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { MOD, numberFormatItems, type CommandHost } from '../commands.ts';
+import { insertChart, MOD, numberFormatItems, type CommandHost } from '../commands.ts';
 import { useController } from '../state/useController.ts';
 import { MenuList } from './Menu.tsx';
 
@@ -156,6 +156,11 @@ export function Toolbar({ host }: { host: CommandHost }) {
       <span className="tb-sep" />
       <Btn title={ctl.tab.filter ? 'Remove filter' : 'Create a filter'} active={!!ctl.tab.filter} onClick={() => (ctl.tab.filter ? ctl.removeFilter() : ctl.createFilter())}>
         <FilterIcon />
+      </Btn>
+      <Btn title="Insert chart" onClick={() => insertChart(host)}>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 14h12M4 12V8M7.3 12V4M10.6 12V6.5M13.5 12V2.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
       </Btn>
       <Btn title={`Clear formatting (${MOD}\\)`} onClick={() => ctl.clearFormatting()}>
         T̸

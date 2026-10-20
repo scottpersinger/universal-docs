@@ -12,7 +12,7 @@ export interface RecentFile {
   name: string;
   /** The folder it is in, with the home directory written "~". */
   where: string;
-  /** When it was last opened. */
+  /** When it was last opened, or for a download not opened since, when it arrived. */
   lastUsed: string;
   size: number;
 }
@@ -33,16 +33,21 @@ const LIMIT = 60;
 
 export const recentsAvailable = (): boolean => process.platform === 'darwin';
 
-/** The files and their last-used dates in mdfind's output ("<path>   kMDItemLastUsedDate = 2026-10-13 21:04:18 +0000"), newest first. */
+/**
+ * The files and their dates in mdfind's output ("<path>   kMDItemLastUsedDate = 2026-10-13 21:04:18 +0000", or
+ * kMDItemDateAdded for a download), newest first. A file listed more than once keeps its latest date.
+ */
 export function parseRecents(output: string): { path: string; lastUsed: string }[] {
-  const out: { path: string; lastUsed: string }[] = [];
+  const latest = new Map<string, string>();
   for (const line of output.split('\n')) {
-    const m = /^(.+?)\s+kMDItemLastUsedDate = (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-]\d\d)(\d\d)$/.exec(line);
+    const m = /^(.+?)\s+kMDItem(?:LastUsedDate|DateAdded) = (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) ([+-]\d\d)(\d\d)$/.exec(line);
     if (!m) continue;
     const when = new Date(`${m[2]}T${m[3]}${m[4]}:${m[5]}`);
-    if (!Number.isNaN(when.getTime())) out.push({ path: m[1], lastUsed: when.toISOString() });
+    if (Number.isNaN(when.getTime())) continue;
+    const iso = when.toISOString();
+    if ((latest.get(m[1]) ?? '') < iso) latest.set(m[1], iso);
   }
-  return out.sort((a, b) => (a.lastUsed < b.lastUsed ? 1 : a.lastUsed > b.lastUsed ? -1 : 0));
+  return [...latest].map(([path, lastUsed]) => ({ path, lastUsed })).sort((a, b) => (a.lastUsed < b.lastUsed ? 1 : a.lastUsed > b.lastUsed ? -1 : 0));
 }
 
 /** Whether a recently used file is one to list: a kind the app shows, and not something hidden or the system's. */
@@ -60,11 +65,23 @@ const whereOf = (file: string, home: string): string => {
   return rel === '' ? '~' : rel.startsWith('..') ? dir : `~/${rel}`;
 };
 
-/** Finder's Recents is the files with a last-used date that the system knows as content (documents, pictures, video), which leaves out files of a type no app has described, such as source files. */
-function mdfind(home: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile('/usr/bin/mdfind', ['-onlyin', home, '-attr', 'kMDItemLastUsedDate', `kMDItemLastUsedDate >= $time.today(-${DAYS}) && kMDItemContentTypeTree == "public.content"`], { maxBuffer: 16 * 1024 * 1024, timeout: 15_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+const spotlight = (args: string[]): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile('/usr/bin/mdfind', args, { maxBuffer: 16 * 1024 * 1024, timeout: 15_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   });
+
+/**
+ * Finder's Recents is the files with a last-used date that the system knows as content (documents, pictures, video),
+ * which leaves out files of a type no app has described, such as source files. A download nobody has opened yet
+ * has no last-used date, so Downloads adds the files that arrived lately, dated when they did, as Finder shows them.
+ */
+async function mdfind(home: string): Promise<string> {
+  const content = 'kMDItemContentTypeTree == "public.content"';
+  const [used, added] = await Promise.all([
+    spotlight(['-onlyin', home, '-attr', 'kMDItemLastUsedDate', `kMDItemLastUsedDate >= $time.today(-${DAYS}) && ${content}`]),
+    spotlight(['-onlyin', path.join(home, 'Downloads'), '-attr', 'kMDItemDateAdded', `kMDItemDateAdded >= $time.today(-${DAYS})`]).catch(() => ''),
+  ]);
+  return `${used}\n${added}`;
 }
 
 /**

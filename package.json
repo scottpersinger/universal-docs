@@ -31,8 +31,9 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.288",
     "@anthropic-ai/sdk": "^0.131.0",
-    "@ascentsparksoftware/react-image-editor": "file:vendor/ascentsparksoftware-react-image-editor-1.1.0-freeflow.1.tgz",
+    "@ascentsparksoftware/react-image-editor": "file:vendor/ascentsparksoftware-react-image-editor-1.1.0-freeflow.2.tgz",
     "@aws-sdk/client-s3": "^3.1147.0",
+    "@cantoo/pdf-lib": "^2.11.1",
     "@fastify/cookie": "^11.1.2",
     "@fastify/static": "^10.1.5",
     "@imgly/background-removal": "^1.7.0",
@@ -68,6 +69,7 @@
     "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
+    "signature_pad": "^5.1.4",
     "unified": "^11.0.5",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"

@@ -298,7 +298,10 @@ describe('a mounted folder', () => {
     expect([meta.kind, meta.format]).toEqual(['deck', 'pptx']);
     type Loaded = { meta: SheetMeta; deck: Deck; notKept?: string[] };
     const loaded = (await call<Loaded>('GET', `/api/decks/${meta.id}`)).body;
-    expect(loaded.notKept).toEqual(['Charts were dropped.']);
+    // The chart comes in as a chart, with the data the file keeps for it: nothing is lost by saving.
+    expect(loaded.notKept).toBeUndefined();
+    const chart = loaded.deck.slides[0].elements.find((e) => e.type === 'chart');
+    expect(chart).toMatchObject({ type: 'chart', chart: { type: 'column' }, data: { categories: ['Q1', 'Q2'], series: [{ name: 'Sales', points: [{ y: 1 }, { y: 2 }] }] } });
     const picture = loaded.deck.slides[0].elements.find((e) => e.type === 'image');
     expect(picture && 'src' in picture && picture.src).toMatch(/^\/api\/images\//);
     // Opening it again stores no picture again.
@@ -429,8 +432,12 @@ describe('recents: the files last opened on the machine', () => {
       '/Users/me/Documents/a.md   kMDItemLastUsedDate = 2026-10-14 02:00:00 +0200',
       '/Users/me/Applications/Thing.app   kMDItemLastUsedDate = (null)',
       'garbage',
+      '',
+      '/Users/me/Downloads/new.xlsx   kMDItemDateAdded = 2026-10-15 09:00:00 +0000',
+      '/Users/me/Downloads/b report.pdf   kMDItemDateAdded = 2026-10-01 08:00:00 +0000',
     ].join('\n');
     expect(parseRecents(out)).toEqual([
+      { path: '/Users/me/Downloads/new.xlsx', lastUsed: '2026-10-15T09:00:00.000Z' },
       { path: '/Users/me/Documents/a.md', lastUsed: '2026-10-14T00:00:00.000Z' },
       { path: '/Users/me/Downloads/b report.pdf', lastUsed: '2026-10-13T21:04:18.000Z' },
     ]);

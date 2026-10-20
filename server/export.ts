@@ -2,6 +2,7 @@
 // zip (GET /api/export.zip), or one folder of it (GET /api/folders/download). Documents export as Markdown, presentations as PowerPoint, spreadsheets as CSV
 // (one tab) or Excel, and every kind as its native JSON. Images stored on the server go into the zip's
 // images/ folder, and Markdown exports point at them with relative paths.
+import { addChartsToXlsx } from './xlsxCharts.ts';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { readFile } from 'node:fs/promises';
@@ -13,7 +14,7 @@ import { docToMarkdown } from '../shared/docMarkdown.ts';
 import type { MarkdownDoc } from '../shared/markdown.ts';
 import { cellKey } from '../shared/cellref.ts';
 import { Engine } from '../shared/formula/engine.ts';
-import { buildPptx } from '../shared/pptxExport.ts';
+import { writePptx } from '../shared/pptxExport.ts';
 import { STORED_IMAGE_RE, type CellStyle, type DocKind, type SheetMeta, type Tab, type Workbook } from '../shared/types.ts';
 import { formatValue, isError, type Scalar } from '../shared/values.ts';
 import type { FileStore } from './files.ts';
@@ -202,10 +203,12 @@ export async function workbookXlsx(wb: Workbook, title: string): Promise<Buffer>
   const book = new ExcelJS.Workbook();
   book.title = title;
   const used = new Set<string>();
+  const names = new Map<string, string>();
   for (const tab of wb.tabs) {
     let name = tab.name.replace(/[[\]*?/\\:]/g, ' ').trim().slice(0, 31) || 'Sheet';
     for (let n = 2; used.has(name.toLowerCase()); n++) name = `${name.slice(0, 28)} ${n}`;
     used.add(name.toLowerCase());
+    names.set(tab.id, name);
     const ws = book.addWorksheet(name);
     for (const [key, cell] of Object.entries(tab.cells)) {
       const m = /^([A-Z]+)(\d+)$/.exec(key);
@@ -239,15 +242,15 @@ export async function workbookXlsx(wb: Workbook, title: string): Promise<Buffer>
     const f = tab.filter;
     if (f) ws.autoFilter = { from: { row: f.r1 + 1, column: f.c1 + 1 }, to: { row: f.r2 + 1, column: f.c2 + 1 } };
   }
-  return Buffer.from(await book.xlsx.writeBuffer());
+  // ExcelJS cannot write charts: they go in after it (server/xlsxCharts.ts).
+  return addChartsToXlsx(Buffer.from(await book.xlsx.writeBuffer()), wb, engine, names);
 }
 
 // --- Presentations ----------------------------------------------------------------------
 
 export async function deckPptx(deck: Deck, title: string, source: ImageSource): Promise<Buffer> {
-  const { pres } = await buildPptx(deck, title, pptxImageLoader(source));
-  const out = await pres.write({ outputType: 'nodebuffer' });
-  return Buffer.isBuffer(out) ? out : Buffer.from(out as ArrayBuffer);
+  const { data } = await writePptx(deck, title, pptxImageLoader(source));
+  return Buffer.from(data);
 }
 
 // --- One file ---------------------------------------------------------------------------

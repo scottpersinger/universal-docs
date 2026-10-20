@@ -1,5 +1,5 @@
 // Browser side of the PowerPoint export: loads the deck's images as data URLs and saves the file.
-import { buildPptx } from '../../../shared/pptxExport.ts';
+import { writePptx } from '../../../shared/pptxExport.ts';
 import type { Deck } from '../../../shared/deck.ts';
 
 async function loadImage(src: string): Promise<string | null> {
@@ -22,7 +22,12 @@ async function loadImage(src: string): Promise<string | null> {
 
 /** Download the deck as <title>.pptx. Resolves with warnings about anything that could not be exported. */
 export async function downloadPptx(deck: Deck, title: string): Promise<string[]> {
-  const { pres, warnings } = await buildPptx(deck, title, loadImage);
-  await pres.writeFile({ fileName: `${title.replace(/[\\/:*?"<>|]+/g, '-')}.pptx` });
+  const { data, warnings } = await writePptx(deck, title, loadImage);
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${title.replace(/[\\/:*?"<>|]+/g, '-')}.pptx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
   return warnings;
 }

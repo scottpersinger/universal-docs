@@ -1,6 +1,8 @@
 import type { AgentEvent, AgentJob, AgentTurnRequest, AssistantSettings, AssistantSettingsUpdate, ChatItem } from '../../shared/agent/protocol.ts';
 import type { ConnectionInfo, ConnectorInfo, FetchResult } from '../../shared/connectors.ts';
 import type { Deck } from '../../shared/deck.ts';
+import type { LinkedTable, SheetTableRef } from '../../shared/sheetTable.ts';
+import type { LinkedChart, SheetChartList } from '../../shared/chart.ts';
 import type { Doc } from '../../shared/doc.ts';
 import type { MarkdownDoc } from '../../shared/markdown.ts';
 import type { FilePreview } from '../../shared/preview.ts';
@@ -85,6 +87,14 @@ export interface FolderInfo {
   path: string;
 }
 
+/** A signature the user keeps for signing PDFs (server/signatures.ts). */
+export interface SavedSignature {
+  id: string;
+  /** A PNG picture as a data: address. */
+  image: string;
+  createdAt: string;
+}
+
 /** `&folder=...` (or `?folder=...`) for an upload that goes into a folder; nothing at the top. */
 const inFolder = (folder: string | undefined, first = false) => (folder ? `${first ? '?' : '&'}folder=${encodeURIComponent(folder)}` : '');
 
@@ -130,6 +140,17 @@ export const api = {
     if (!res.ok || !data.file) throw new ApiError(res.status, res.status === 413 ? 'This picture is too large to save.' : (data.error ?? `Saving the picture failed (${res.status})`));
     return data.file;
   },
+  /** Save a signed PDF over a stored one; the version before is kept for one revert. */
+  updatePdfFile: async (id: string, pdf: Blob): Promise<StoredFile> => {
+    const res = await fetch(`/api/files/${encodeURIComponent(id)}`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/pdf' }, body: pdf });
+    const data = (await res.json().catch(() => ({}))) as { file?: StoredFile; error?: string };
+    if (!res.ok || !data.file) throw new ApiError(res.status, res.status === 413 ? 'This PDF is too large to save.' : (data.error ?? `Saving the PDF failed (${res.status})`));
+    return data.file;
+  },
+  /** The user's saved signatures (PNG data: addresses), for signing PDFs. */
+  listSignatures: () => request<{ signatures: SavedSignature[] }>('GET', '/api/settings/signatures'),
+  addSignature: (image: string) => request<{ signature: SavedSignature }>('POST', '/api/settings/signatures', { image }),
+  deleteSignature: (id: string) => request<{ ok: true }>('DELETE', `/api/settings/signatures/${encodeURIComponent(id)}`),
   /** Make an edited copy of a stored picture with the image model; resolves with the new file. */
   editImage: (id: string, prompt: string) => request<{ file: StoredFile }>('POST', `/api/files/${encodeURIComponent(id)}/edit-image`, { prompt }),
   revertFile: (id: string) => request<{ file: StoredFile }>('POST', `/api/files/${encodeURIComponent(id)}/revert`),
@@ -168,6 +189,14 @@ export const api = {
   resetPassword: (token: string, password: string) => request<{ user: User }>('POST', '/api/auth/reset', { token, password }),
 
   listSheets: () => request<{ sheets: SheetMeta[] }>('GET', '/api/sheets'),
+  /** A spreadsheet's charts, and one of them as a slide shows it (shared/chart.ts). */
+  sheetCharts: (id: string) => request<SheetChartList>('GET', `/api/sheets/${encodeURIComponent(id)}/charts`),
+  sheetChart: (id: string, chartId: string) => request<LinkedChart>('GET', `/api/sheets/${encodeURIComponent(id)}/chart?chart=${encodeURIComponent(chartId)}`),
+  /** A range of a spreadsheet as the cells of a slide table (its used part when no range is given). */
+  sheetTable: (id: string, ref: SheetTableRef) => {
+    const q = new URLSearchParams(Object.entries(ref).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== ''));
+    return request<LinkedTable>('GET', `/api/sheets/${encodeURIComponent(id)}/table${q.size ? `?${q}` : ''}`);
+  },
   createSheet: (title: string, folder?: string) => request<{ sheet: SheetMeta }>('POST', '/api/sheets', { title, folder: folder || undefined }),
   /** Create a CSV file from the text of an uploaded .csv file; it opens in the spreadsheet editor. */
   importCsv: (title: string, csv: string, folder?: string) => request<{ sheet: SheetMeta }>('POST', '/api/sheets', { title, csv, folder: folder || undefined }),

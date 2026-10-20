@@ -7,6 +7,7 @@ import { HOME_CHAT, isJobLive, JOB_ACTIVE_STATUSES, MAX_IMAGES_PER_MESSAGE, MAX_
 import type { SheetMeta, StoredFile } from '../../../shared/types.ts';
 import { shortenHtml } from '../htmlEdit.ts';
 import { api, ApiError } from '../api.ts';
+import { activeImageEditor } from '../image/activeEditor.ts';
 import { editedCopyName } from '../image/limits.ts';
 import { prepareImage } from './images.ts';
 import { fileAt, WINDOW_ID } from '../desktopBridge.ts';
@@ -21,7 +22,7 @@ import { deckToPdf } from '../deck/pdf.ts';
 import { renderSlideImage } from '../deck/renderSlide.ts';
 import type { SheetController } from '../state/controller.ts';
 import { confirmationFor, runClientTool, ToolError, type OpenedDoc } from './clientTools.ts';
-import { keepDeckPictures } from './deckTools.ts';
+import { keepDeckPictures, linkDeckTables } from './deckTools.ts';
 
 export interface OpenSheet {
   ctl: SheetController;
@@ -447,7 +448,8 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   };
 
   /** Save whatever is open, then show a stored file's preview tab. */
-  const openFileById = async (id: string): Promise<StoredFile> => {
+  /** `edit`: show a picture in the image editor rather than as it is. */
+  const openFileById = async (id: string, edit = false): Promise<StoredFile> => {
     let file: StoredFile;
     try {
       file = (await api.getFile(id)).file;
@@ -461,7 +463,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       await deck.ctl.saver.flush();
     }
     await docRef.current?.ctl.saver.flush();
-    navigate(`/f/${encodeURIComponent(id)}`);
+    navigate(`/f/${encodeURIComponent(id)}${edit ? '?edit=1' : ''}`);
     return file;
   };
 
@@ -509,8 +511,9 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
   /** Run one tool on what is open, as the assistant's step `group`; `rendered` collects pictures it returns (render_slide). */
   const runTool = async (call: ClientToolCall, group: string, rendered: AgentImage[]): Promise<string> =>
-    // A picture from the web that is going on a slide is stored with the presentation first.
-    runClientTool(await keepDeckPictures(call, api.keepWebImage), {
+    // A picture from the web that is going on a slide is stored with the presentation first, and a spreadsheet
+    // range a table is linked to is read.
+    runClientTool(await keepDeckPictures(await linkDeckTables(call, api.sheetTable, api.sheetChart), api.keepWebImage), {
       ctl: sheetRef.current?.ctl ?? null,
       deck: deckRef.current?.ctl ?? null,
       doc: docRef.current?.ctl ?? null,
@@ -568,6 +571,16 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         return file;
       },
       saveImageCopy: (of, image) => api.uploadFile(editedCopyName(of.filename, image.type), image, of.folder),
+      // The picture's page with its editor, once the editor is ready to be edited in (activeEditor.ts).
+      openImageEditor: async (id) => {
+        if (!activeImageEditor(id)) await openFileById(id, true);
+        for (let waited = 0; waited < 30_000; waited += 100) {
+          const handle = activeImageEditor(id);
+          if (handle) return handle;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return null;
+      },
       openImageEngine: async (source) => (await import('../image/hiddenEngine.ts')).openHiddenEngine(source, { backgroundRemovalLoader: () => import('@imgly/background-removal') }),
       toAgentImage: async (file, data) => {
         const { mediaType, data: base64 } = await prepareImage(new File([data], file.filename, { type: file.type }));

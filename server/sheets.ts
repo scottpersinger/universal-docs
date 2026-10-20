@@ -9,6 +9,7 @@ import { csvProblem, csvStyle, csvToWorkbook, isCsvDoc, newCsvDoc, workbookToCsv
 import { migrateDeck } from '../shared/lines.ts';
 import { checkCellImage, newWorkbook, type DocKind, type SheetMeta, type Workbook } from '../shared/types.ts';
 import { xlsxProblem } from '../shared/xlsxFormat.ts';
+import { validateCharts } from '../shared/chart.ts';
 import type { Backup } from './backup.ts';
 import type { DB } from './db.ts';
 
@@ -92,6 +93,8 @@ export function validateWorkbook(wb: unknown): string | null {
     }
     if (!t.colWidths || typeof t.colWidths !== 'object') return 'Invalid column widths';
     if (!t.rowHeights || typeof t.rowHeights !== 'object') return 'Invalid row heights';
+    const charts = validateCharts(t.charts);
+    if (charts) return `Tab "${t.name}": ${charts}`;
   }
   return null;
 }

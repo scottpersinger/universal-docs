@@ -9,12 +9,14 @@ import {
   SLIDE_W,
   THEMES,
   fillColor,
+  type ChartElement,
   type ImageElement,
   type LineElement,
   type Paragraph,
   type ShapeElement,
   type Slide,
   type SlideElement,
+  type TableElement,
   type TextElement,
   type TextRun,
   type Theme,
@@ -24,6 +26,9 @@ import { createPortal } from 'react-dom';
 import { fontFamilies } from './fonts.ts';
 import { dashArray, DEFAULT_LINE_WIDTH, lineGeometry as routeGeometry } from '../../../shared/lines.ts';
 import { arcGeometry, arcPathOn, isDrawn, polygonPoints, SHAPES } from '../../../shared/shapes.ts';
+import { cellLook, colShares, mixColor, TABLE_PAD, TABLE_SIZE, tableColors } from '../../../shared/deckTable.ts';
+import { chartOfSlide } from '../../../shared/chart.ts';
+import { ChartView } from '../chart/ChartView.tsx';
 
 /** A box override while an element is being dragged or resized. */
 export type BoxPreview = Partial<Pick<SlideElement, 'x' | 'y' | 'w' | 'h'>> & Partial<Pick<LineElement, 'flipH' | 'flipV' | 'startConnection' | 'endConnection' | 'bend'>> & { startAngle?: number; endAngle?: number };
@@ -38,11 +43,25 @@ export interface SlideViewProps {
   editing?: { id: string; caret?: { x: number; y: number }; onCommit(paragraphs: Paragraph[]): void; onStop(): void } | null;
   onElementMouseDown?(e: MouseEvent, el: SlideElement): void;
   onElementDoubleClick?(e: MouseEvent, el: SlideElement): void;
+  /** The current cell of a table (outlined), and, while its text is being edited, the callbacks of the cell editor. */
+  tableCell?: TableCellState | null;
   /** The videos that are players rather than stills: all of them (the show), or the one with this id. */
   playVideo?: true | string | null;
   /** Drawn on top of the elements (selection handles). */
   children?: ReactNode;
   className?: string;
+}
+
+export interface TableCellState {
+  id: string;
+  r: number;
+  c: number;
+  editing?: {
+    onCommit(text: string): void;
+    /** Tab and Shift-Tab: go to the next or the previous cell (the text is committed first). */
+    onMove(step: 1 | -1): void;
+    onStop(): void;
+  };
 }
 
 export function themeVars(t: Theme): CSSProperties {
@@ -588,7 +607,108 @@ function TextEditor({ initial, onCommit, onStop, style, caret }: { initial: Para
   );
 }
 
-export function SlideView({ slide, theme: themeId, scale, preview, editing, onElementMouseDown, onElementDoubleClick, playVideo, children, className }: SlideViewProps) {
+/** Inline editor for a table cell's text: plain text, lines kept. Uncontrolled, committed on blur, Tab or Escape. */
+function CellEditor({ initial, editing }: { initial: string; editing: NonNullable<TableCellState['editing']> }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const committed = useRef(false);
+  const commit = () => {
+    if (committed.current || !ref.current) return;
+    committed.current = true;
+    editing.onCommit((ref.current.innerText ?? '').replace(/\u200b/g, '').replace(/\n$/, ''));
+  };
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.textContent = initial;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => () => commit(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div
+      ref={ref}
+      className="sl-cell-editor sl-editing"
+      contentEditable="plaintext-only"
+      suppressContentEditableWarning
+      spellCheck={false}
+      onBlur={() => {
+        commit();
+        editing.onStop();
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          commit();
+          editing.onStop();
+        } else if (e.key === 'Tab') {
+          e.preventDefault();
+          commit();
+          editing.onMove(e.shiftKey ? -1 : 1);
+        }
+      }}
+    />
+  );
+}
+
+/** A chart element, drawn in the deck's colors on the slide's background. */
+function SlideChartView({ el, theme, w, h }: { el: ChartElement; theme: Theme; w: number; h: number }) {
+  return <ChartView chart={chartOfSlide(el.chart, w, h)} data={el.data} width={w} height={h} look={{ background: 'none', text: theme.text, muted: theme.muted, grid: mixColor(theme.muted, theme.bg, 0.3), font: theme.bodyFont }} />;
+}
+
+/** A table element: an HTML table filling its box, its rows sharing the height and its columns the width by their shares. */
+function TableView({ el, theme, bg, cell }: { el: TableElement; theme: Theme; bg?: string; cell?: TableCellState | null }) {
+  const colors = tableColors(el, theme, bg);
+  const shares = colShares(el);
+  const size = el.style?.size ?? TABLE_SIZE;
+  const border = colors.border === 'none' ? 'none' : `1px solid ${colors.border}`;
+  return (
+    <table className="sl-table-grid" style={{ fontSize: size, fontFamily: el.style?.font ? `${fontFamilies(el.style.font)}, ${theme.bodyFont}` : theme.bodyFont, color: colors.text }}>
+      <colgroup>
+        {shares.map((w, i) => (
+          <col key={i} style={{ width: `${w * 100}%` }} />
+        ))}
+      </colgroup>
+      <tbody>
+        {el.rows.map((row, r) => (
+          <tr key={r} style={{ height: `${100 / el.rows.length}%` }}>
+            {row.map((c, ci) => {
+              const look = cellLook(el, r, ci, colors);
+              const current = cell && cell.r === r && cell.c === ci;
+              return (
+                <td
+                  key={ci}
+                  data-cell={`${r}:${ci}`}
+                  className={current ? 'current' : undefined}
+                  style={{
+                    border,
+                    padding: `${TABLE_PAD.y}px ${TABLE_PAD.x}px`,
+                    background: look.fill,
+                    color: look.color,
+                    fontWeight: look.bold ? 700 : 400,
+                    fontStyle: look.italic ? 'italic' : 'normal',
+                    textAlign: look.align,
+                  }}
+                >
+                  {current && cell.editing ? <CellEditor initial={c.text} editing={cell.editing} /> : c.text || '\u200b'}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function SlideView({ slide, theme: themeId, scale, preview, editing, tableCell, onElementMouseDown, onElementDoubleClick, playVideo, children, className }: SlideViewProps) {
   const theme = THEMES[themeId];
   // On the editor canvas (not present mode or thumbnails) a plain click on a link of a non-editing box shows the link menu.
   const [linkAnchor, setLinkAnchor] = useState<HTMLAnchorElement | null>(null);
@@ -654,6 +774,20 @@ export function SlideView({ slide, theme: themeId, scale, preview, editing, onEl
               <div key={el.id} {...common} className="sl-el sl-image" style={{ ...box, ...(el.clip ? { clipPath: el.clip } : {}), ...(el.crop ? { overflow: 'hidden' } : {}), ...(el.opacity !== undefined ? { opacity: el.opacity } : {}) }}>
                 {el.duotone && <DuotoneFilter id={`sl-duo-${el.id}`} tones={el.duotone} />}
                 <img src={el.src} alt="" draggable={false} style={{ ...imageStyle(el), ...(el.duotone ? { filter: `url(#sl-duo-${el.id})` } : {}) }} />
+              </div>
+            );
+          }
+          if (el.type === 'chart') {
+            return (
+              <div key={el.id} {...common} className="sl-el sl-chart" style={box}>
+                <SlideChartView el={el} theme={theme} w={preview?.[el.id]?.w ?? el.w} h={preview?.[el.id]?.h ?? el.h} />
+              </div>
+            );
+          }
+          if (el.type === 'table') {
+            return (
+              <div key={el.id} {...common} className="sl-el sl-table" style={box}>
+                <TableView el={el} theme={theme} bg={slide.bg} cell={tableCell?.id === el.id ? tableCell : null} />
               </div>
             );
           }

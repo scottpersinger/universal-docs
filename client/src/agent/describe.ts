@@ -55,6 +55,12 @@ export function toolLabel(name: string, i: Input): string {
       return `Added an image to ${where(i)}`;
     case 'set_cell_link':
       return `Added a link to ${where(i)}`;
+    case 'add_chart':
+      return `Added a ${typeof i.type === 'string' ? `${i.type} ` : ''}chart${typeof i.title === 'string' && i.title ? ` “${i.title}”` : ''}`;
+    case 'edit_chart':
+      return 'Changed a chart';
+    case 'delete_chart':
+      return 'Deleted a chart';
     case 'set_filter':
       return typeof i.range === 'string' ? `Added a filter to ${where(i)}` : 'Removed the filter';
     case 'set_filter_criteria':
@@ -110,8 +116,9 @@ export function toolLabel(name: string, i: Input): string {
     case 'edit_image':
       return 'Made an edited copy of a picture';
     case 'transform_image': {
-      const n = Array.isArray(i.operations) ? i.operations.length : 0;
-      return `Edited a picture (${n} ${n === 1 ? 'change' : 'changes'})`;
+      const ops = Array.isArray(i.operations) ? (i.operations as { op?: unknown }[]) : [];
+      if (ops.length === 1 && ops[0]?.op === 'overlay') return 'Put a picture on top of another';
+      return `Edited a picture (${ops.length} ${ops.length === 1 ? 'change' : 'changes'})`;
     }
     case 'convert_pdf':
       return 'Made a Markdown copy of a PDF';

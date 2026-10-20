@@ -16,6 +16,9 @@ import {
   type Slide,
   type SlideContent,
   type SlideElement,
+  type TableCell,
+  type TableElement,
+  type TableStyle,
   type TextElement,
   type TextStyle,
   type ThemeId,
@@ -24,6 +27,9 @@ import {
 } from '../../../shared/deck.ts';
 import { boxFromEnds, cloneElements, DEFAULT_LINE_WIDTH } from '../../../shared/lines.ts';
 import { arcTightBox, SHAPES } from '../../../shared/shapes.ts';
+import { deleteCols, deleteRows, insertCols, insertRows, newTable, normalShares, patchCells, withSheetCells } from '../../../shared/deckTable.ts';
+import { sourceOf, type LinkedTable } from '../../../shared/sheetTable.ts';
+import { chartSourceOf, type LinkedChart } from '../../../shared/chart.ts';
 import { AutoSaver, TransactionRefused } from '../state/store.ts';
 import { DeckStore, type DeckTx } from './store.ts';
 
@@ -44,8 +50,10 @@ export class DeckController {
   current = 0;
   /** Ids of the selected elements on the current slide. */
   selection: string[] = [];
-  /** Element whose text is being edited inline. */
+  /** Element whose text is being edited inline (for a table, the text of `tableCell`). */
   editing: string | null = null;
+  /** The current cell of the selected table: the one being edited, or last clicked, which the table commands act on. */
+  tableCell: { id: string; r: number; c: number } | null = null;
   /** The picture element being cropped (its crop frame is on the slide), if any. */
   cropping: string | null = null;
   /** The line tool picked in the toolbar: the next drag on the slide draws this kind of line. */
@@ -100,6 +108,11 @@ export class DeckController {
     this.selection = this.selection.filter((id) => ids.has(id));
     if (this.editing && !ids.has(this.editing)) this.editing = null;
     if (this.cropping && !ids.has(this.cropping)) this.cropping = null;
+    const cell = this.tableCell;
+    const table = cell && this.selection.length === 1 && this.selection[0] === cell.id ? this.slide.elements.find((e) => e.id === cell.id) : undefined;
+    if (!cell || table?.type !== 'table') this.tableCell = null;
+    else this.tableCell = { id: cell.id, r: Math.min(cell.r, table.rows.length - 1), c: Math.min(cell.c, table.rows[0].length - 1) };
+    if (this.editing && this.slide.elements.find((e) => e.id === this.editing)?.type === 'table' && !this.tableCell) this.editing = null;
   }
 
   private meta(): Meta {
@@ -187,6 +200,7 @@ export class DeckController {
     this.selection = [];
     this.editing = null;
     this.cropping = null;
+    this.tableCell = null;
     this.emit();
   }
 
@@ -194,6 +208,7 @@ export class DeckController {
     this.selection = ids;
     if (this.editing && !ids.includes(this.editing)) this.editing = null;
     if (this.cropping && !ids.includes(this.cropping)) this.cropping = null;
+    if (this.tableCell && !(ids.length === 1 && ids[0] === this.tableCell.id)) this.tableCell = null;
     this.emit();
   }
 
@@ -230,6 +245,37 @@ export class DeckController {
     else this.emit();
   }
 
+  /** Select a table and make one of its cells the current one; with `edit`, edit its text. */
+  selectCell(id: string, r: number, c: number, edit = false): void {
+    const el = this.slide.elements.find((e) => e.id === id);
+    if (el?.type !== 'table') return;
+    this.selection = [id];
+    this.tableCell = { id, r: Math.max(0, Math.min(r, el.rows.length - 1)), c: Math.max(0, Math.min(c, el.rows[0].length - 1)) };
+    // A linked table's cells are the spreadsheet's: they are not edited here.
+    this.editing = edit && !el.source ? id : null;
+    this.cropping = null;
+    this.emit();
+  }
+
+  /** Go on to the next (or previous) cell of the table being edited; Tab in the last cell adds a row. */
+  moveCell(step: 1 | -1): void {
+    const cell = this.tableCell;
+    const el = cell && this.slide.elements.find((e) => e.id === cell.id);
+    if (!cell || el?.type !== 'table') return;
+    const n = el.rows[0].length;
+    const at = cell.r * n + cell.c + step;
+    if (at < 0) return;
+    if (at >= el.rows.length * n) this.updateElements([el.id], (e) => (e.type === 'table' ? insertRows(e, e.rows.length) : e));
+    this.selectCell(el.id, Math.floor(at / n), at % n, true);
+  }
+
+  /** Put a cell's edited text in place. */
+  setCellText(id: string, r: number, c: number, text: string): void {
+    const el = this.slide.elements.find((e) => e.id === id);
+    if (el?.type !== 'table' || el.source || el.rows[r]?.[c] === undefined || el.rows[r][c].text === text) return;
+    this.updateElements([id], (e) => (e.type === 'table' ? patchCells(e, r, c, r, c, { text }) : e));
+  }
+
   stopEditing(): void {
     if (!this.editing) return;
     this.editing = null;
@@ -242,6 +288,7 @@ export class DeckController {
       this.editing = null;
       this.cropping = null;
       this.selection = [];
+      this.tableCell = null;
     }
     this.emit();
   }
@@ -412,6 +459,160 @@ export class DeckController {
   private addArc(): string {
     const box = arcTightBox({ cx: SLIDE_W / 2, cy: SLIDE_H / 2, rx: 150, ry: 150 }, 270, 0, 2);
     return this.addElement({ type: 'shape', shape: 'arc', ...box, tight: true, startAngle: 270, endAngle: 0 });
+  }
+
+  /** Add an empty table of rows × columns in the middle of the slide. */
+  addTable(rows: number, cols: number): string {
+    return this.addElement(newTable(rows, cols));
+  }
+
+  /** The selected table, if one table alone is selected. */
+  get table(): TableElement | null {
+    const sel = this.selected;
+    return sel.length === 1 && sel[0].type === 'table' ? sel[0] : null;
+  }
+
+  /** Change the selected table. A change that would leave it without rows or columns removes it. */
+  private changeTable(fn: (el: TableElement) => TableElement | null): void {
+    const el = this.table;
+    if (!el) return;
+    const next = fn(el);
+    if (next) this.updateElements([el.id], () => next);
+    else this.removeElements([el.id]);
+  }
+
+  /** Insert a row above or below the current cell's (the last row when there is no current cell). */
+  insertTableRow(where: 'above' | 'below'): void {
+    const el = this.table;
+    if (!el || el.source) return;
+    const r = this.tableCell?.r ?? el.rows.length - 1;
+    this.changeTable((t) => insertRows(t, where === 'above' ? r : r + 1));
+    if (this.tableCell && where === 'above') this.selectCell(el.id, r + 1, this.tableCell.c);
+  }
+
+  insertTableColumn(where: 'left' | 'right'): void {
+    const el = this.table;
+    if (!el || el.source) return;
+    const c = this.tableCell?.c ?? el.rows[0].length - 1;
+    this.changeTable((t) => insertCols(t, where === 'left' ? c : c + 1));
+    if (this.tableCell && where === 'left') this.selectCell(el.id, this.tableCell.r, c + 1);
+  }
+
+  /** Delete the current cell's row (or the last row). */
+  deleteTableRow(): void {
+    const el = this.table;
+    if (el && !el.source) this.changeTable((t) => deleteRows(t, this.tableCell?.r ?? el.rows.length - 1));
+  }
+
+  deleteTableColumn(): void {
+    const el = this.table;
+    if (el && !el.source) this.changeTable((t) => deleteCols(t, this.tableCell?.c ?? el.rows[0].length - 1));
+  }
+
+  /** Change the selected table's own properties (undefined removes one). */
+  setTableOptions(patch: { header?: boolean; banded?: boolean; cols?: number[] }): void {
+    this.changeTable((t) => {
+      const next = { ...t } as Record<string, unknown>;
+      if ('header' in patch) next.header = patch.header;
+      if ('banded' in patch) next.banded = patch.banded;
+      if ('cols' in patch) next.cols = patch.cols && normalShares(patch.cols);
+      for (const k of ['header', 'banded', 'cols']) if (!next[k]) delete next[k];
+      return next as unknown as TableElement;
+    });
+  }
+
+  /** Apply a style patch to the selected table as a whole (undefined removes a property). */
+  styleTable(patch: Partial<Record<keyof TableStyle, unknown>>): void {
+    this.changeTable((t) => {
+      const style: Record<string, unknown> = { ...t.style };
+      for (const k in patch) {
+        if (patch[k as keyof TableStyle] === undefined) delete style[k];
+        else style[k] = patch[k as keyof TableStyle];
+      }
+      const next = { ...t };
+      if (Object.keys(style).length) next.style = style as TableStyle;
+      else delete next.style;
+      return next;
+    });
+  }
+
+  /** Style the current cell of the selected table, or every cell when there is none (undefined or false removes). */
+  styleCells(patch: Partial<Omit<TableCell, 'text'>>): void {
+    if (this.table?.source) return; // the spreadsheet's look, refreshed with its values
+    const cell = this.tableCell;
+    this.changeTable((t) => (cell ? patchCells(t, cell.r, cell.c, cell.r, cell.c, patch) : patchCells(t, 0, 0, t.rows.length - 1, t.rows[0].length - 1, patch)));
+  }
+
+  /**
+   * Add a table of a spreadsheet range; `linked` keeps it showing the range as the spreadsheet changes, and
+   * `used` has it follow the tab's used part rather than the range read.
+   */
+  addSheetTable(sheetId: string, data: LinkedTable, linked: boolean, used = false): string {
+    const t = newTable(data.rows.length, data.rows[0]?.length ?? 1);
+    return this.addElement({ ...t, rows: data.rows, ...(linked ? { source: sourceOf(sheetId, data, used) } : {}) });
+  }
+
+  /**
+   * Put the latest cells of its range in a linked table, wherever it is in the presentation, as one undo step.
+   * Quietly does nothing when the presentation cannot be changed now (an Office file not yet allowed editing).
+   */
+  refreshLinkedTable(id: string, data: LinkedTable): boolean {
+    const at = this.deck.slides.findIndex((s) => s.elements.some((e) => e.id === id));
+    const el = at >= 0 ? this.deck.slides[at].elements.find((e) => e.id === id) : undefined;
+    if (el?.type !== 'table' || !el.source) return false;
+    const next = withSheetCells(el, data.rows, sourceOf(el.source.sheet, data, el.source.used));
+    if (JSON.stringify(next) === JSON.stringify(el)) return false;
+    const before = this.meta();
+    try {
+      const changed = this.store.transact((tx) => tx.updateSlide(at, (s) => ({ ...s, elements: s.elements.map((e) => (e.id === id ? next : e)) })), { before });
+      if (changed) this.store.amendLastMeta(this.meta());
+      this.emit();
+      return changed;
+    } catch (e) {
+      if (e instanceof TransactionRefused) return false;
+      throw e;
+    }
+  }
+
+  /** Keep the selected table's cells (or chart's data) as they are, no longer following its spreadsheet. */
+  unlinkTable(): void {
+    const el = this.selected.length === 1 ? this.selected[0] : null;
+    if (el?.type === 'chart' && el.source) {
+      const { source: _source, ...rest } = el;
+      this.updateElements([el.id], () => rest);
+      return;
+    }
+    this.changeTable((t) => {
+      const { source: _source, ...rest } = t;
+      return rest;
+    });
+  }
+
+  /** Add a spreadsheet's chart, at its size scaled to fit the slide, in the middle; `linked` keeps it following the spreadsheet. */
+  addSheetChart(sheetId: string, chartId: string, c: LinkedChart, linked: boolean): string {
+    const scale = Math.min(1, 800 / Math.max(1, c.w), 440 / Math.max(1, c.h));
+    const w = Math.round(c.w * scale);
+    const h = Math.round(c.h * scale);
+    return this.addElement({ type: 'chart', x: Math.round((SLIDE_W - w) / 2), y: Math.round((SLIDE_H - h) / 2), w, h, chart: c.chart, data: c.data, ...(linked ? { source: chartSourceOf(sheetId, chartId, c) } : {}) });
+  }
+
+  /** Put the latest look and data of its spreadsheet chart in a linked slide chart, as refreshLinkedTable does a table. */
+  refreshLinkedChart(id: string, c: LinkedChart): boolean {
+    const at = this.deck.slides.findIndex((s) => s.elements.some((e) => e.id === id));
+    const el = at >= 0 ? this.deck.slides[at].elements.find((e) => e.id === id) : undefined;
+    if (el?.type !== 'chart' || !el.source) return false;
+    const next = { ...el, chart: c.chart, data: c.data, source: chartSourceOf(el.source.sheet, el.source.chart, c) };
+    if (JSON.stringify(next) === JSON.stringify(el)) return false;
+    const before = this.meta();
+    try {
+      const changed = this.store.transact((tx) => tx.updateSlide(at, (s) => ({ ...s, elements: s.elements.map((e) => (e.id === id ? next : e)) })), { before });
+      if (changed) this.store.amendLastMeta(this.meta());
+      this.emit();
+      return changed;
+    } catch (e) {
+      if (e instanceof TransactionRefused) return false;
+      throw e;
+    }
   }
 
   /** Add an image scaled to fit the slide (natural size is used when known). */

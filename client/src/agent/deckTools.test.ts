@@ -3,7 +3,7 @@ import type { ClientToolCall } from '../../../shared/agent/protocol.ts';
 import { newDeck, slideContent, slideTitle, type TextElement } from '../../../shared/deck.ts';
 import { DeckController } from '../deck/controller.ts';
 import { confirmationFor, runClientTool, type ClientToolEnv } from './clientTools.ts';
-import { keepDeckPictures } from './deckTools.ts';
+import { keepDeckPictures, linkDeckTables } from './deckTools.ts';
 import { pptxGuard } from '../deck/store.ts';
 import { lockedGuard } from '../state/store.ts';
 
@@ -108,6 +108,87 @@ describe('agent deck tools', () => {
     await expect(call('edit_elements', { slide: 1, set: [{ id: 'nope', x: 1 }] })).rejects.toThrow(/no element "nope"/);
     await expect(call('edit_elements', { slide: 1, set: [{ type: 'image', src: 'ftp://x/y.png' }] })).rejects.toThrow(/Image must be/);
     await expect(call('edit_elements', { slide: 1, set: [{ type: 'text', text: 'hi', x: Number.NaN }] })).rejects.toThrow(/invalid x/);
+  });
+
+  it('adds a table, changes single cells and rows, and reports it in read_deck', async () => {
+    const { deck, call } = setup();
+    const res = await call('edit_elements', { slide: 1, set: [{ type: 'table', rows: [['Region', 'Q1'], ['North', '10'], ['South']], x: 100, y: 120, banded: true }] });
+    const id = res.set[0].id as string;
+    // Rows are padded to the widest; the box is sized to the rows; a header row by default.
+    expect(res.set[0]).toMatchObject({ type: 'table', x: 100, y: 120, w: 320, h: 120 });
+    const table = () => deck.deck.slides[0].elements.find((e) => e.id === id)!;
+    expect(table()).toMatchObject({ header: true, banded: true, rows: [[{ text: 'Region' }, { text: 'Q1' }], [{ text: 'North' }, { text: '10' }], [{ text: 'South' }, { text: '' }]] });
+
+    await call('edit_elements', { slide: 1, set: [{ id, cells: [{ row: 3, col: 2, text: '7', align: 'right', bold: true }], col_widths: [240, 80], size: 20, stroke: 'none' }] });
+    expect(table()).toMatchObject({ cols: [0.75, 0.25], style: { size: 20, border: 'none' } });
+    if (table().type !== 'table') throw new Error('not a table');
+    // New rows keep the look of the cells they land on, and the table keeps its rows' height.
+    await call('edit_elements', { slide: 1, set: [{ id, rows: [['Region', 'Q1'], ['North', '10'], ['South', '7'], ['West', '3']], header: false }] });
+    const t = table();
+    if (t.type !== 'table') throw new Error('not a table');
+    expect(t.h).toBe(160);
+    expect(t.header).toBeUndefined();
+    expect(t.rows[2][1]).toEqual({ text: '7', align: 'right', bold: true });
+    expect(t.rows[3][1]).toEqual({ text: '3' });
+
+    const outline = (await call('read_deck')).slides[0].elements.find((e: { id: string }) => e.id === id);
+    expect(outline).toMatchObject({ type: 'table', rows: [['Region', 'Q1'], ['North', '10'], ['South', '7'], ['West', '3']], header: false, banded: true, col_widths: [240, 80], cell_styles: [{ row: 3, col: 2, align: 'right', bold: true }] });
+
+    await expect(call('edit_elements', { slide: 1, set: [{ type: 'table' }] })).rejects.toThrow(/needs rows/);
+    await expect(call('edit_elements', { slide: 1, set: [{ id, cells: [{ row: 9, col: 1, text: 'x' }] }] })).rejects.toThrow(/no cell at row 9/);
+    await expect(call('edit_elements', { slide: 1, set: [{ id, col_widths: [1, 2, 3] }] })).rejects.toThrow(/needs 2 widths/);
+    await expect(call('edit_elements', { slide: 1, set: [{ id, type: 'text' }] })).rejects.toThrow(/type cannot change/);
+  });
+
+  it('links a table to a spreadsheet range, refuses to edit its cells, and unlinks it', async () => {
+    const { deck, env } = setup();
+    const asked: unknown[] = [];
+    const read = async (sheetId: string, ref: { range?: string }) => {
+      asked.push(ref);
+      if (sheetId !== 'sheet-1') throw new Error('There is no spreadsheet nope.');
+      return { title: 'Figures', rev: 'r1', tabId: 't1', tab: 'Data', range: 'A1:B2', tabs: ['Data'], rows: [[{ text: 'Item', bold: true }, { text: 'Cost' }], [{ text: 'Pens' }, { text: '5', align: 'right' as const }]] };
+    };
+    const run = async (input: Record<string, unknown>) => JSON.parse(await runClientTool(await linkDeckTables({ id: 'x', name: 'edit_elements', input }, read), env));
+    const res = await run({ slide: 1, set: [{ type: 'table', link: { sheet_id: 'sheet-1', range: 'Data!A1:B2' }, banded: true }] });
+    const id = res.set[0].id as string;
+    const table = () => deck.deck.slides[0].elements.find((e) => e.id === id)!;
+    expect(table()).toMatchObject({ h: 80, banded: true, header: true, source: { sheet: 'sheet-1', tab: 'Data', range: 'A1:B2', rev: 'r1' }, rows: [[{ text: 'Item', bold: true }, { text: 'Cost' }], [{ text: 'Pens' }, { text: '5', align: 'right' }]] });
+    expect(asked).toEqual([{ range: 'Data!A1:B2' }]);
+    expect(table()).not.toMatchObject({ source: { used: true } });
+    // Without a range (or with only the tab) the table follows the tab's used part.
+    const whole = await run({ slide: 1, set: [{ type: 'table', link: { sheet_id: 'sheet-1', range: 'Data!' } }] });
+    expect(deck.deck.slides[0].elements.find((e) => e.id === whole.set[0].id)).toMatchObject({ source: { used: true } });
+    await run({ slide: 1, remove: [whole.set[0].id] });
+    const outline = JSON.parse(await runClientTool({ id: 'r', name: 'read_deck', input: {} }, env)).slides[0].elements.find((e: { id: string }) => e.id === id);
+    expect(outline.linked).toMatchObject({ sheet_id: 'sheet-1', title: 'Figures', range: 'Data!A1:B2' });
+
+    await expect(run({ slide: 1, set: [{ id, cells: [{ row: 1, col: 1, text: 'x' }] }] })).rejects.toThrow(/cannot be changed here/);
+    await expect(run({ slide: 1, set: [{ type: 'table', link: { sheet_id: 'nope' } }] })).rejects.toThrow(/Could not read the range to link: There is no spreadsheet nope/);
+    // Its own look still changes; null unlinks and keeps the values, which can then be edited.
+    await run({ slide: 1, set: [{ id, size: 20 }] });
+    expect(table()).toMatchObject({ style: { size: 20 }, source: { sheet: 'sheet-1' } });
+    await run({ slide: 1, set: [{ id, link: null, cells: [{ row: 2, col: 2, text: '6' }] }] });
+    expect(table()).not.toHaveProperty('source');
+    expect(table()).toMatchObject({ rows: [[{ text: 'Item' }, { text: 'Cost' }], [{ text: 'Pens' }, { text: '6', align: 'right' }]] });
+  });
+
+  it('puts a spreadsheet chart on a slide, moves it and unlinks it, and refuses a chart with nothing to show', async () => {
+    const { deck, env } = setup();
+    const chart = { title: 'Figures', rev: 'r1', tabId: 't1', tab: 'Data', w: 1200, h: 600, chart: { id: 'c9', type: 'column' as const, title: 'Costs', series: [{ values: 'B2:B3' }] }, data: { categories: ['a', 'b'], series: [{ name: 'Cost', color: '#4285f4', points: [{ y: 1 }, { y: 2 }] }] } };
+    const run = async (input: Record<string, unknown>) =>
+      JSON.parse(await runClientTool(await linkDeckTables({ id: 'x', name: 'edit_elements', input }, async () => Promise.reject(new Error('no tables')), async (sheet, id) => (sheet === 's1' && id === 'c9' ? chart : Promise.reject(new Error('There is no such chart.')))), env));
+    const res = await run({ slide: 1, set: [{ type: 'chart', link: { sheet_id: 's1', chart_id: 'c9' } }] });
+    const id = res.set[0].id as string;
+    const el = () => deck.deck.slides[0].elements.find((e) => e.id === id)!;
+    // Scaled to fit the slide, in the middle.
+    expect(el()).toMatchObject({ type: 'chart', x: 80, y: 70, w: 800, h: 400, chart: { title: 'Costs' }, source: { sheet: 's1', chart: 'c9', tab: 'Data', rev: 'r1' } });
+    const outline = JSON.parse(await runClientTool({ id: 'r', name: 'read_deck', input: {} }, env)).slides[0].elements.find((e: { id: string }) => e.id === id);
+    expect(outline).toMatchObject({ type: 'chart', chart_type: 'column', labels: ['a', 'b'], series: [{ name: 'Cost', values: [1, 2] }], linked: { sheet_id: 's1', chart_id: 'c9' } });
+    await run({ slide: 1, set: [{ id, x: 10, w: 400, link: null }] });
+    expect(el()).toMatchObject({ x: 10, w: 400, h: 400 });
+    expect(el()).not.toHaveProperty('source');
+    await expect(run({ slide: 1, set: [{ type: 'chart' }] })).rejects.toThrow(/needs link/);
+    await expect(run({ slide: 1, set: [{ type: 'chart', link: { sheet_id: 's1', chart_id: 'zz' } }] })).rejects.toThrow(/Could not read the chart to link: There is no such chart/);
   });
 
   it('draws an elbow connector between two boxes that follows them, and reports it in read_deck', async () => {

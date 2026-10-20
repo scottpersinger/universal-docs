@@ -1,4 +1,5 @@
 import { cellKey, parseCellKey, type Range } from '../../../shared/cellref.ts';
+import { adjustCharts, type ChartChange } from '../../../shared/chart.ts';
 import { adjustForDelete, adjustForInsert, adjustForMove, isFormula, moveIndexMap, moveSpan, renameSheetRefs, shiftFormula } from '../../../shared/formula/adjust.ts';
 import type { CellData, CellStyle, FilterCondition, FilterState, Tab } from '../../../shared/types.ts';
 import { hasContent, newTab } from '../../../shared/types.ts';
@@ -108,11 +109,15 @@ function rebuildTabs(
   mapIndex: (i: number) => number | null,
   adjust: (raw: string, ownSheet: string, targetSheet: string) => string,
   transformTarget: (t: Tab) => Partial<Tab>,
+  chartChange?: ChartChange,
 ): void {
   const target = tx.tab(tabId);
   const newTabs = tx.workbook.tabs.map((t) => {
     const isTarget = t.id === tabId;
     let changed = isTarget;
+    // Charts' ranges follow the data as formulas do, and the target tab's charts stay over their cells.
+    const charts = chartChange ? adjustCharts(t.charts, t, chartChange, mapIndex) : t.charts;
+    if (charts !== t.charts && JSON.stringify(charts) !== JSON.stringify(t.charts)) changed = true;
     const cells: Record<string, CellData> = {};
     for (const key in t.cells) {
       const cell = t.cells[key];
@@ -134,7 +139,8 @@ function rebuildTabs(
       cells[nk] = next;
     }
     if (!changed) return t;
-    return isTarget ? { ...t, cells, ...transformTarget(t) } : { ...t, cells };
+    const withCharts = charts ? { charts } : {};
+    return isTarget ? { ...t, cells, ...withCharts, ...transformTarget(t) } : { ...t, cells, ...withCharts };
   });
   tx.setTabs(newTabs);
 }
@@ -186,6 +192,7 @@ export function insertLines(tx: Tx, tabId: string, axis: Axis, at: number, count
             filter: adjustFilter(t.filter, 'col', map),
             frozenCols: t.frozenCols && at < t.frozenCols ? t.frozenCols + count : t.frozenCols,
           },
+    { kind: 'insert', tab: tx.tab(tabId).name, axis, at, count },
   );
 }
 
@@ -217,6 +224,7 @@ export function deleteLines(tx: Tx, tabId: string, axis: Axis, from: number, to:
             filter: adjustFilter(t.filter, 'col', map, [from, to]),
             frozenCols: frozen(t.frozenCols),
           },
+    { kind: 'delete', tab: tab.name, axis, from, to },
   );
 }
 
@@ -251,6 +259,7 @@ export function moveColumns(tx: Tx, tabId: string, from: number, to: number, bef
       }
       return { colWidths: shiftSizes(t.colWidths, map), filter };
     },
+    { kind: 'move', tab: tab.name, axis: 'col', move: mv },
   );
   return map(from);
 }
@@ -602,6 +611,8 @@ export function duplicateTab(tx: Tx, tabId: string): string {
   const copy: Tab = JSON.parse(JSON.stringify(src));
   copy.id = crypto.randomUUID();
   copy.name = uniqueTabName(tx.workbook.tabs, `Copy of ${src.name}`);
+  // The copy's charts are its own (their ranges on the tab are the copy's, as its formulas' are).
+  if (copy.charts) copy.charts = copy.charts.map((c) => ({ ...c, id: crypto.randomUUID() }));
   const tabs = [...tx.workbook.tabs];
   tabs.splice(tabs.indexOf(src) + 1, 0, copy);
   tx.setTabs(tabs);
@@ -648,7 +659,9 @@ export function appendTabs(tx: Tx, incoming: Tab[]): { ids: string[]; renamed: {
         cells[key] = v === cell.v ? cell : { ...cell, v };
       }
     }
-    return { ...t, id: crypto.randomUUID(), name: renames.get(t.name) ?? t.name, cells };
+    let charts = t.charts;
+    for (const [from, to] of renames) charts = adjustCharts(charts, t, { kind: 'rename', from, to });
+    return { ...t, id: crypto.randomUUID(), name: renames.get(t.name) ?? t.name, cells, ...(charts ? { charts } : {}) };
   });
   tx.setTabs([...existing, ...added]);
   return { ids: added.map((t) => t.id), renamed };
@@ -674,6 +687,33 @@ export function renameTab(tx: Tx, tabId: string, name: string): void {
       const v = renameSheetRefs(cell.v, old, name);
       if (v !== cell.v) tx.setCell(t.id, key, { ...cell, v });
     }
+    const charts = adjustCharts(t.charts, t, { kind: 'rename', from: old, to: name });
+    if (charts && JSON.stringify(charts) !== JSON.stringify(t.charts)) tx.setTabProp(t.id, 'charts', charts);
   }
   tx.setTabProp(tabId, 'name', name);
+}
+
+/**
+ * The block of data around a cell, as Ctrl-A or a chart of one cell takes it: the cell's range grown in every
+ * direction while the row or column next to it (including the corners) has something in it.
+ */
+export function dataRegion(tab: Tab, r: number, c: number): Range {
+  const filled = (rr: number, cc: number) => rr >= 0 && cc >= 0 && rr < tab.rows && cc < tab.cols && !!tab.cells[cellKey(rr, cc)]?.v;
+  const rg = { r1: r, c1: c, r2: r, c2: c };
+  const lineFilled = (fixed: number, from: number, to: number, isRow: boolean) => {
+    for (let i = from; i <= to; i++) if (isRow ? filled(fixed, i) : filled(i, fixed)) return true;
+    return false;
+  };
+  for (let grew = true, guard = 0; grew && guard < 100_000; guard++) {
+    grew = false;
+    if (lineFilled(rg.r1 - 1, rg.c1 - 1, rg.c2 + 1, true)) (rg.r1--, (grew = true));
+    if (lineFilled(rg.r2 + 1, rg.c1 - 1, rg.c2 + 1, true)) (rg.r2++, (grew = true));
+    if (lineFilled(rg.c1 - 1, rg.r1 - 1, rg.r2 + 1, false)) (rg.c1--, (grew = true));
+    if (lineFilled(rg.c2 + 1, rg.r1 - 1, rg.r2 + 1, false)) (rg.c2++, (grew = true));
+    rg.r1 = Math.max(0, rg.r1);
+    rg.c1 = Math.max(0, rg.c1);
+    rg.r2 = Math.min(tab.rows - 1, rg.r2);
+    rg.c2 = Math.min(tab.cols - 1, rg.c2);
+  }
+  return rg;
 }

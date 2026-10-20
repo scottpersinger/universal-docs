@@ -18,6 +18,10 @@ import {
   type LineKind,
   type ShapeElement,
   type SlideContent,
+  type ChartElement,
+  type TableCell,
+  type TableElement,
+  type TableStyle,
   type SlideElement,
   type TextElement,
   type TextStyle,
@@ -25,6 +29,10 @@ import {
 } from '../../../shared/deck.ts';
 import { boxFromEnds, lineEnds, lineFromShape } from '../../../shared/lines.ts';
 import { checkCellImage, type StoredFile } from '../../../shared/types.ts';
+import { cellsFromTexts, columnCount, normalShares, patchCell, TABLE_ROW_H } from '../../../shared/deckTable.ts';
+import { sourceOf, type LinkedTable, type SheetTableRef } from '../../../shared/sheetTable.ts';
+import { chartSourceOf, type LinkedChart } from '../../../shared/chart.ts';
+import { splitTabRange } from '../../../shared/agent/sheetRead.ts';
 import { arcGeometry, arcTightBox, type ArcGeom } from '../../../shared/shapes.ts';
 import type { DeckController } from '../deck/controller.ts';
 import type { SlideRender } from '../deck/renderSlide.ts';
@@ -100,6 +108,57 @@ export async function keepDeckPictures(call: ClientToolCall, keep: (url: string)
   return { ...call, input: { ...i, set: await each(i.set, 'src') } };
 }
 
+/** Where linkDeckTables puts a range it read, in the element spec it read it for. */
+const LINKED = '__linked_table';
+/** And a chart. */
+const LINKED_CHART = '__linked_chart';
+
+/**
+ * The call with every table it links to a spreadsheet range (edit_elements, link: {sheet_id, range}) given the
+ * range's cells and source, read with `read` (it throws when the spreadsheet or range is not there). The deck
+ * tools themselves do not wait on the network; this runs before them, wherever they run.
+ */
+export async function linkDeckTables(
+  call: ClientToolCall,
+  read: (sheetId: string, ref: SheetTableRef) => Promise<LinkedTable>,
+  readChart: (sheetId: string, chartId: string) => Promise<LinkedChart> = async () => Promise.reject(new Error('Charts cannot be linked here.')),
+): Promise<ClientToolCall> {
+  if (call.name !== 'edit_elements' || !Array.isArray(call.input.set)) return call;
+  const set: unknown[] = [];
+  for (const item of call.input.set as unknown[]) {
+    const link = item && typeof item === 'object' ? (item as Input).link : undefined;
+    if (!link || typeof link !== 'object') {
+      set.push(item);
+      continue;
+    }
+    const { sheet_id, range, chart_id } = link as { sheet_id?: unknown; range?: unknown; chart_id?: unknown };
+    if (typeof sheet_id !== 'string' || !sheet_id) throw new ToolError('link needs sheet_id: the id of a spreadsheet (list_sheets).');
+    // A chart shows a chart of the spreadsheet; a table, a range of it.
+    if ((item as Input).type === 'chart' || typeof chart_id === 'string') {
+      if (typeof chart_id !== 'string' || !chart_id) throw new ToolError("A chart's link needs chart_id: one of the spreadsheet's charts (read_other_sheet lists them under each tab's charts).");
+      let c: LinkedChart;
+      try {
+        c = await readChart(sheet_id, chart_id);
+      } catch (e) {
+        throw new ToolError(`Could not read the chart to link: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      const { link: _link, ...rest } = item as Input;
+      set.push({ ...rest, [LINKED_CHART]: { chart: c.chart, data: c.data, source: chartSourceOf(sheet_id, chart_id, c), w: c.w, h: c.h } });
+      continue;
+    }
+    let table: LinkedTable;
+    try {
+      table = await read(sheet_id, typeof range === 'string' && range ? { range } : {});
+    } catch (e) {
+      throw new ToolError(`Could not read the range to link: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const { link: _link, ...rest } = item as Input;
+    // Without a range the table follows the tab's used part as the data grows.
+    set.push({ ...rest, [LINKED]: { rows: table.rows, source: sourceOf(sheet_id, table, !(typeof range === 'string' && splitTabRange(range).range)) } });
+  }
+  return { ...call, input: { ...call.input, set } };
+}
+
 function checkImage(src: unknown): string {
   const problem = checkCellImage(src);
   if (problem) throw new ToolError(`${problem}.`);
@@ -148,6 +207,91 @@ function applyLineSpec(id: string, prev: LineElement | undefined, s: Input, byId
   return el;
 }
 
+/** A table from an edit_elements spec (rows, cells, header, banded, col_widths and its text style), merged into the table it changes. */
+function applyTableSpec(prev: TableElement | undefined, s: Input): TableElement {
+  let rows: TableCell[][] | undefined = prev?.rows;
+  const linked = s[LINKED] as { rows: TableCell[][]; source: TableElement['source'] } | undefined;
+  const source = linked ? linked.source : s.link === null ? undefined : prev?.source;
+  if (s.link && !linked) throw new ToolError('This link was not read. Try again.');
+  if (source && (Array.isArray(s.rows) || Array.isArray(s.cells))) {
+    throw new ToolError(`The table shows the spreadsheet range ${source.tab}!${source.range}, so its cells cannot be changed here: change the spreadsheet, link another range, or pass link: null to unlink it first.`);
+  }
+  if (linked) rows = linked.rows;
+  if (Array.isArray(s.rows)) {
+    const texts = (s.rows as unknown[][]).map((r) => r.map((t) => String(t ?? '')));
+    if (!texts.length) throw new ToolError('A table needs at least one row.');
+    // The new texts keep the look of the cells they land on.
+    rows = cellsFromTexts(texts).map((row, r) => row.map((cell, c) => ({ ...prev?.rows[r]?.[c], text: cell.text })));
+  }
+  if (!rows) throw new ToolError('A new table needs rows (the text of its cells, row by row) or link (a spreadsheet range to show).');
+  if (Array.isArray(s.cells)) {
+    rows = rows.map((row) => [...row]);
+    for (const spec of s.cells as Input[]) {
+      const r = Number(spec.row) - 1;
+      const c = Number(spec.col) - 1;
+      if (!rows[r]?.[c]) throw new ToolError(`There is no cell at row ${spec.row}, column ${spec.col}: the table has ${rows.length} rows and ${rows[0].length} columns.`);
+      const patch: Partial<TableCell> = {};
+      for (const k of ['text', 'bold', 'italic', 'color', 'fill', 'align'] as const) if (spec[k] !== undefined) (patch as Record<string, unknown>)[k] = spec[k];
+      rows[r][c] = patchCell(rows[r][c], patch);
+    }
+  }
+  const n = rows[0].length;
+  const box = {
+    x: typeof s.x === 'number' ? s.x : (prev?.x ?? 80),
+    y: typeof s.y === 'number' ? s.y : (prev?.y ?? 80),
+    w: typeof s.w === 'number' ? s.w : (prev?.w ?? Math.min(800, n * 160)),
+    // A table that gains or loses rows keeps its rows' height unless a height is given.
+    h: typeof s.h === 'number' ? s.h : prev ? Math.round((prev.h / prev.rows.length) * rows.length) : rows.length * TABLE_ROW_H,
+  };
+  const el: TableElement = { id: prev?.id ?? newId(), type: 'table', ...box, rows, ...(source ? { source } : {}) };
+  const header = s.header !== undefined ? !!s.header : prev ? !!prev.header : true;
+  const banded = s.banded !== undefined ? !!s.banded : !!prev?.banded;
+  if (header) el.header = true;
+  if (banded) el.banded = true;
+  if (Array.isArray(s.col_widths)) {
+    const widths = s.col_widths as number[];
+    if (widths.length && widths.length !== n) throw new ToolError(`col_widths needs ${n} widths, one per column (or [] for equal columns).`);
+    const cols = widths.length ? normalShares(widths) : undefined;
+    if (cols) el.cols = cols;
+  } else if (prev?.cols && columnCount(prev) === n) el.cols = prev.cols;
+  const style: Record<string, unknown> = { ...prev?.style };
+  const set = (k: keyof TableStyle, v: unknown) => {
+    if (v === undefined) return;
+    if (v === '') delete style[k];
+    else style[k] = v;
+  };
+  set('size', s.size);
+  set('font', s.font);
+  set('color', s.color);
+  set('border', s.stroke);
+  set('headerFill', s.header_fill);
+  if (Object.keys(style).length) el.style = style as TableStyle;
+  return el;
+}
+
+/** A slide chart from an edit_elements spec: one shows a spreadsheet's chart (link), and is moved, resized or unlinked here. */
+function applyChartSpec(prev: ChartElement | undefined, s: Input): ChartElement {
+  const linked = s[LINKED_CHART] as { chart: ChartElement['chart']; data: ChartElement['data']; source: ChartElement['source']; w: number; h: number } | undefined;
+  if (s.link && !linked) throw new ToolError('This link was not read. Try again.');
+  if (!prev && !linked) throw new ToolError('A new chart needs link: {sheet_id, chart_id}, a chart of a spreadsheet (make one there with add_chart first).');
+  const scale = linked ? Math.min(1, 800 / Math.max(1, linked.w), 440 / Math.max(1, linked.h)) : 1;
+  const w = typeof s.w === 'number' ? s.w : (prev?.w ?? Math.round((linked?.w ?? 600) * scale));
+  const h = typeof s.h === 'number' ? s.h : (prev?.h ?? Math.round((linked?.h ?? 371) * scale));
+  const el: ChartElement = {
+    id: prev?.id ?? newId(),
+    type: 'chart',
+    x: typeof s.x === 'number' ? s.x : (prev?.x ?? Math.round((960 - w) / 2)),
+    y: typeof s.y === 'number' ? s.y : (prev?.y ?? Math.round((540 - h) / 2)),
+    w,
+    h,
+    chart: linked?.chart ?? prev!.chart,
+    data: linked?.data ?? prev!.data,
+  };
+  const source = linked ? linked.source : s.link === null ? undefined : prev?.source;
+  if (source) el.source = source;
+  return el;
+}
+
 /** Merge an element spec from edit_elements into an existing element, or build a new one. */
 function applyElementSpec(existing: SlideElement | undefined, s: Input, byId: Map<string, SlideElement> = new Map()): SlideElement {
   if (existing?.type === 'shape' && existing.shape === 'line') existing = lineFromShape(existing);
@@ -158,8 +302,10 @@ function applyElementSpec(existing: SlideElement | undefined, s: Input, byId: Ma
     return applyLineSpec(existing?.id ?? newId(), existing as LineElement | undefined, s, byId);
   }
   if (existing?.type === 'line') throw new ToolError(`Element ${existing.id} is a line; its type cannot change. Remove it and add a new one.`);
-  if (!type) throw new ToolError('A new element needs a type: text, image, video or shape.');
+  if (!type) throw new ToolError('A new element needs a type: text, image, video, shape, line or table.');
   if (existing && s.type && s.type !== existing.type) throw new ToolError(`Element ${existing.id} is a ${existing.type}; its type cannot change. Remove it and add a new one.`);
+  if (type === 'table') return applyTableSpec(existing as TableElement | undefined, s);
+  if (type === 'chart') return applyChartSpec(existing as ChartElement | undefined, s);
   const box = {
     x: typeof s.x === 'number' ? s.x : (existing?.x ?? 80),
     y: typeof s.y === 'number' ? s.y : (existing?.y ?? 80),

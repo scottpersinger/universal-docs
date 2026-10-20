@@ -15,8 +15,18 @@ export type ImageOp = { op: string } & Record<string, unknown>;
 /** What of the engine the operations use; tests pass a stand-in (the real one needs a browser canvas). */
 export type OpsEngine = Pick<
   EditorEngine,
-  'getOutputSize' | 'cropTo' | 'rotateBy' | 'setStraighten' | 'flip' | 'setOutputWidth' | 'setAdjustments' | 'toggleLook' | 'isLookActive' | 'addTextBox' | 'addShapeAt' | 'redactRect' | 'removeImageBackground' | 'hasCropRegion' | 'getLayers'
+  'getOutputSize' | 'cropTo' | 'rotateBy' | 'setStraighten' | 'flip' | 'setOutputWidth' | 'setAdjustments' | 'toggleLook' | 'isLookActive' | 'addTextBox' | 'addShapeAt' | 'addImageAt' | 'redactRect' | 'removeImageBackground' | 'hasCropRegion' | 'getLayers'
 > & { readonly backgroundRemovalAvailable: boolean };
+
+/** A picture to put over the picture (overlay), read by whoever runs the operations, with its size in pixels. */
+export interface OverlayPicture {
+  image: Blob;
+  width: number;
+  height: number;
+}
+
+/** Reads an overlay's `source` (a stored picture's address or file id); throws ImageOpError when it cannot. */
+export type OverlayLoader = (source: string) => Promise<OverlayPicture>;
 
 /** A problem with an operation that the assistant can fix (a rectangle outside the picture, an unknown shape). */
 export class ImageOpError extends Error {}
@@ -41,11 +51,11 @@ const outside = (engine: OpsEngine) => new ImageOpError(`That rectangle is outsi
  * engine turns the photo alone, under its crop and its layers. Without it (the editor the user has open, whose
  * layers must stay editable) such a turn is refused. A problem stops at that operation; the ones before stand.
  */
-export async function applyImageOps(engine: OpsEngine, ops: ImageOp[], bake?: () => Promise<void>): Promise<string[]> {
+export async function applyImageOps(engine: OpsEngine, ops: ImageOp[], bake?: () => Promise<void>, load?: OverlayLoader): Promise<string[]> {
   const done: string[] = [];
   for (const [n, op] of ops.entries()) {
     try {
-      done.push(await applyOne(engine, op, bake));
+      done.push(await applyOne(engine, op, bake, load));
     } catch (e) {
       if (e instanceof ImageOpError) throw new ImageOpError(`Operation ${n + 1} (${String(op.op)}): ${e.message}${done.length ? ` The ${done.length} before it were applied.` : ''}`);
       throw e;
@@ -61,7 +71,7 @@ async function plain(engine: OpsEngine, bake: (() => Promise<void>) | undefined,
   await bake();
 }
 
-async function applyOne(engine: OpsEngine, op: ImageOp, bake?: () => Promise<void>): Promise<string> {
+async function applyOne(engine: OpsEngine, op: ImageOp, bake?: () => Promise<void>, load?: OverlayLoader): Promise<string> {
   switch (op.op) {
     case 'crop': {
       if (!engine.cropTo(rectOf(op))) throw outside(engine);
@@ -136,6 +146,29 @@ async function applyOne(engine: OpsEngine, op: ImageOp, bake?: () => Promise<voi
       if (!id) throw line ? new ImageOpError('The two points are the same.') : outside(engine);
       return `Added ${kind === 'ellipse' || kind === 'arrow' ? 'an' : 'a'} ${kind}`;
     }
+    case 'overlay': {
+      const source = optStr(op, 'source');
+      if (!source) throw new ImageOpError('"source" is missing: the address of the picture to put on top (an attached picture’s /api/images/... address) or a stored picture’s file_id.');
+      if (!load) throw new ImageOpError('Pictures cannot be put on top here.');
+      const x = num(op, 'x');
+      const y = num(op, 'y');
+      const picture = await load(source);
+      const size = engine.getOutputSize();
+      let width = optNum(op, 'width');
+      let height = optNum(op, 'height');
+      // With no size given it keeps its own, made smaller if it would run past the picture's edges.
+      if (width === undefined && height === undefined && size) {
+        const fit = Math.min(1, (size.width - x) / picture.width, (size.height - y) / picture.height);
+        if (fit > 0) width = Math.max(1, Math.round(picture.width * fit));
+      }
+      if (width !== undefined && height === undefined) height = Math.round((width * picture.height) / picture.width);
+      if (height !== undefined && width === undefined) width = Math.round((height * picture.width) / picture.height);
+      if (size && (x >= size.width || y >= size.height || x + (width ?? picture.width) <= 0 || y + (height ?? picture.height) <= 0)) throw outside(engine);
+      const opacity = optNum(op, 'opacity');
+      const id = await engine.addImageAt(picture.image, { x, y, width, height }, { opacity: opacity === undefined ? 1 : Math.max(0, Math.min(100, opacity)) / 100 });
+      if (!id) throw new ImageOpError('The picture could not be put on top: its size is under one pixel.');
+      return `Put a picture on top at ${x}, ${y}, ${width ?? picture.width} × ${height ?? picture.height}${opacity !== undefined && opacity < 100 ? `, ${Math.max(0, opacity)}% opaque` : ''}`;
+    }
     case 'redact': {
       const mode = op.mode === 'blur' || op.mode === 'pixelate' ? op.mode : 'solid';
       if (!(await engine.redactRect(rectOf(op), mode))) throw outside(engine);
@@ -147,6 +180,6 @@ async function applyOne(engine: OpsEngine, op: ImageOp, bake?: () => Promise<voi
       return 'Removed the background';
     }
     default:
-      throw new ImageOpError(`Unknown operation. Use crop, rotate, straighten, flip, resize, adjust, filter, text, shape, redact or remove_background.`);
+      throw new ImageOpError(`Unknown operation. Use crop, rotate, straighten, flip, resize, adjust, filter, text, shape, overlay, redact or remove_background.`);
   }
 }

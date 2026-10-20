@@ -301,6 +301,32 @@ describe('auth', () => {
   });
 });
 
+describe('saved signatures', () => {
+  it('keeps each user their own signatures, added and removed one at a time', async () => {
+    const { cookie } = await signUp(app, box, 'sig@x.com');
+    const { cookie: other } = await signUp(app, box, 'sig2@x.com');
+    const url = '/api/settings/signatures';
+    expect((await app.inject({ method: 'GET', url })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url, headers: { cookie } })).json()).toEqual({ signatures: [] });
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const first = (await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image } })).json().signature;
+    const second = (await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image } })).json().signature;
+    expect(first).toMatchObject({ image });
+    expect((await app.inject({ method: 'GET', url, headers: { cookie } })).json().signatures.map((s: { id: string }) => s.id)).toEqual([first.id, second.id]);
+    expect((await app.inject({ method: 'GET', url, headers: { cookie: other } })).json()).toEqual({ signatures: [] });
+    // Only a PNG picture.
+    expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image: 'data:image/svg+xml;base64,PHN2Zy8+' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image: 'hello' } })).statusCode).toBe(400);
+    // Not another user's.
+    expect((await app.inject({ method: 'DELETE', url: `${url}/${first.id}`, headers: { cookie: other } })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'DELETE', url: `${url}/${first.id}`, headers: { cookie } })).json()).toEqual({ ok: true });
+    expect((await app.inject({ method: 'GET', url, headers: { cookie } })).json().signatures.map((s: { id: string }) => s.id)).toEqual([second.id]);
+    // Up to a limit.
+    for (let n = 1; n < 12; n++) expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url, headers: { cookie }, payload: { image } })).statusCode).toBe(400);
+  });
+});
+
 describe('sheets', () => {
   it('requires auth', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/sheets' });
@@ -807,7 +833,7 @@ describe('stored files', () => {
     expect(res.headers['content-disposition']).toContain('attachment');
     expect(res.payload).toBe('<script>alert(1)</script>');
     expect((await app.inject({ method: 'GET', url: page.downloadUrl, headers: { cookie } })).headers['content-disposition']).toContain('attachment');
-    // A text file can be rewritten, and the version before comes back with a revert; a PDF cannot be rewritten.
+    // A text file can be rewritten, and the version before comes back with a revert; a PDF only as a PDF.
     res = await app.inject({ method: 'PUT', url: page.url, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: Buffer.from('<p>light</p>') });
     expect(res.json().file).toMatchObject({ id: page.id, size: 12 });
     expect((await app.inject({ method: 'GET', url: page.url, headers: { cookie } })).payload).toBe('<p>light</p>');
@@ -815,6 +841,12 @@ describe('stored files', () => {
     expect((await app.inject({ method: 'GET', url: page.url, headers: { cookie } })).payload).toBe('<script>alert(1)</script>');
     expect((await app.inject({ method: 'PUT', url: file.url, headers: { cookie, 'content-type': 'application/octet-stream' }, payload: Buffer.from('x') })).statusCode).toBe(400);
     expect((await app.inject({ method: 'POST', url: `${file.url}/revert`, headers: { cookie } })).statusCode).toBe(404);
+    // A signed PDF is saved over the PDF, and the one before comes back with a revert.
+    expect((await app.inject({ method: 'PUT', url: file.url, headers: { cookie, 'content-type': 'application/pdf' }, payload: Buffer.from('not a pdf') })).statusCode).toBe(400);
+    res = await app.inject({ method: 'PUT', url: file.url, headers: { cookie, 'content-type': 'application/pdf' }, payload: Buffer.from('%PDF-1.4 signed') });
+    expect(res.json().file).toMatchObject({ id: file.id, type: 'application/pdf', size: 15 });
+    expect((await app.inject({ method: 'POST', url: `${file.url}/revert`, headers: { cookie } })).json().file).toMatchObject({ size: pdf.length });
+    expect((await app.inject({ method: 'GET', url: file.url, headers: { cookie } })).rawPayload.equals(pdf)).toBe(true);
     expect((await app.inject({ method: 'PUT', url: page.url, headers: { 'content-type': 'application/octet-stream' }, payload: Buffer.from('x') })).statusCode).toBe(401);
     // A picture can be saved over by the image editor, as the type it is; the version before comes back with a revert.
     const png = (n: number) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(n, 7)]);
@@ -1050,5 +1082,49 @@ describe('a picture from the web for a slide', () => {
       await a.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('a spreadsheet range for a slide table', () => {
+  it('reads the range as table cells with the revision, for the owner only', async () => {
+    const { cookie } = await signUp(app, box, 'table-range@example.com');
+    let res = await app.inject({ method: 'POST', url: '/api/sheets', headers: { cookie }, payload: { title: 'Figures' } });
+    const sheet = res.json().sheet as { id: string };
+    const workbook = { version: 1, tabs: [{ id: 'tab-a', name: 'Data', rows: 100, cols: 26, cells: { A1: { v: 'Item', st: { b: true } }, B1: { v: 'Cost' }, A2: { v: 'Pens' }, B2: { v: '=2+3' } }, colWidths: {}, rowHeights: {} }] };
+    res = await app.inject({ method: 'PUT', url: `/api/sheets/${sheet.id}`, headers: { cookie }, payload: { workbook } });
+    expect(res.statusCode).toBe(200);
+    const rev = res.json().sheet.updatedAt as string;
+
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/table?range=Data!A1:B2`, headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ title: 'Figures', rev, tabId: 'tab-a', tab: 'Data', range: 'A1:B2', rows: [[{ text: 'Item', bold: true }, { text: 'Cost' }], [{ text: 'Pens' }, { text: '5', align: 'right' }]] });
+
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/table?range=Q1:Q2`, headers: { cookie } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/empty/);
+    const other = await signUp(app, box, 'table-range-other@example.com');
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/table`, headers: { cookie: other.cookie } });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("a spreadsheet's charts for a slide", () => {
+  it('lists the charts and reads one with its data, for the owner', async () => {
+    const { cookie } = await signUp(app, box, 'sheet-charts@example.com');
+    let res = await app.inject({ method: 'POST', url: '/api/sheets', headers: { cookie }, payload: { title: 'Charted' } });
+    const sheet = res.json().sheet as { id: string };
+    const chart = { id: 'ch1', type: 'column', anchor: { r: 0, c: 3, dx: 0, dy: 0 }, w: 500, h: 300, title: 'Costs', categories: 'A2:A3', series: [{ values: 'B2:B3', nameRef: 'B1' }] };
+    const workbook = { version: 1, tabs: [{ id: 'tab-a', name: 'Data', rows: 100, cols: 26, cells: { A1: { v: 'Item' }, B1: { v: 'Cost' }, A2: { v: 'Pens' }, B2: { v: '=2+3' }, A3: { v: 'Ink' }, B3: { v: '7' } }, colWidths: {}, rowHeights: {}, charts: [chart] }] };
+    res = await app.inject({ method: 'PUT', url: `/api/sheets/${sheet.id}`, headers: { cookie }, payload: { workbook } });
+    expect(res.statusCode).toBe(200);
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/charts`, headers: { cookie } });
+    expect(res.json()).toEqual({ title: 'Charted', charts: [{ id: 'ch1', tabId: 'tab-a', tab: 'Data', type: 'column', title: 'Costs' }] });
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/chart?chart=ch1`, headers: { cookie } });
+    expect(res.json()).toMatchObject({ title: 'Charted', tab: 'Data', w: 500, h: 300, chart: { type: 'column', title: 'Costs' }, data: { categories: ['Pens', 'Ink'], series: [{ name: 'Cost', points: [{ y: 5 }, { y: 7 }] }] } });
+    res = await app.inject({ method: 'GET', url: `/api/sheets/${sheet.id}/chart?chart=nope`, headers: { cookie } });
+    expect(res.statusCode).toBe(404);
+    // A chart that is not one is refused when the workbook is saved.
+    res = await app.inject({ method: 'PUT', url: `/api/sheets/${sheet.id}`, headers: { cookie }, payload: { workbook: { ...workbook, tabs: [{ ...workbook.tabs[0], charts: [{ ...chart, type: 'radar' }] }] } } });
+    expect(res.statusCode).toBe(400);
   });
 });

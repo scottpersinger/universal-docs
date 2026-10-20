@@ -14,6 +14,7 @@ import * as ops from './ops.ts';
 import { findMatches, type SearchHit, type SearchOptions } from './search.ts';
 import { diffWorkbooks, type Side, type WorkbookDiff } from '../../../shared/diff.ts';
 import { AutoSaver, TransactionRefused, WorkbookStore, type Tx } from './store.ts';
+import { MAX_CHARTS, suggestChart, type Chart } from '../../../shared/chart.ts';
 
 export interface Selection {
   ranges: Range[]; // last one is the primary range
@@ -108,6 +109,10 @@ export class SheetController {
   /** How many times replaceWith brought in a version saved elsewhere (the page can tell the user). */
   externalChanges = 0;
   version = 0;
+  /** The chart of the active tab that is selected (outlined, moved and resized on the grid), if any. */
+  selectedChart: string | null = null;
+  /** The chart whose editor panel is open, if any. */
+  chartEditor: string | null = null;
 
   private sels = new Map<string, Selection>();
   private clipboard: InternalClipboard | null = null;
@@ -208,6 +213,9 @@ export class SheetController {
       });
     }
     if (!this.store.getTab(this.activeTabId)) this.activeTabId = this.store.workbook.tabs[0].id;
+    const charts = this.store.getTab(this.activeTabId)?.charts ?? [];
+    if (this.selectedChart && !charts.some((c) => c.id === this.selectedChart)) this.selectedChart = null;
+    if (this.chartEditor && !charts.some((c) => c.id === this.chartEditor)) this.chartEditor = null;
   }
 
   selectCell(p: CellPos, opts: { extend?: boolean; add?: boolean } = {}): void {
@@ -861,8 +869,81 @@ export class SheetController {
     if (!this.store.getTab(id)) return;
     this.activeTabId = id;
     this.filterMenu = null;
+    this.selectedChart = null;
+    this.chartEditor = null;
     this.requestScroll(this.sel.active);
     this.emit();
+  }
+
+  // -------------------------------------------------------------------------
+  // Charts (shared/chart.ts)
+
+  /** The active tab's charts. */
+  get charts(): Chart[] {
+    return this.tab.charts ?? [];
+  }
+
+  selectChart(id: string | null): void {
+    if (this.selectedChart === id) return;
+    if (id && this.edit) this.commitEdit();
+    this.selectedChart = id;
+    this.emit();
+  }
+
+  /** Open (or, with null, close) the chart editor on a chart of the active tab. */
+  editChart(id: string | null): void {
+    this.chartEditor = id;
+    if (id) this.selectedChart = id;
+    this.emit();
+  }
+
+  /**
+   * Add a chart of the selection (a single cell stands for the block of data around it) next to it, and open
+   * its editor. A message when there is nothing to chart.
+   */
+  insertChart(): string | null {
+    if (this.edit) this.commitEdit();
+    const tab = this.tab;
+    if (this.charts.length >= MAX_CHARTS) return `A sheet holds at most ${MAX_CHARTS} charts.`;
+    const ranges = this.sel.ranges;
+    let rg = this.primary;
+    // Columns picked one by one (Ctrl-click) over the same rows: the chart of the block they span, of them only.
+    const columns = ranges.length > 1 && ranges.every((r) => r.r1 === ranges[0].r1 && r.r2 === ranges[0].r2) ? ranges : null;
+    if (columns) rg = { r1: columns[0].r1, r2: columns[0].r2, c1: Math.min(...columns.map((r) => r.c1)), c2: Math.max(...columns.map((r) => r.c2)) };
+    else if (rg.r1 === rg.r2 && rg.c1 === rg.c2) rg = ops.dataRegion(tab, rg.r1, rg.c1);
+    const id = crypto.randomUUID();
+    const picked = (c: number) => !columns || columns.some((r) => c >= r.c1 && c <= r.c2);
+    const chart = suggestChart(this.store.engine, tab, rg, id, { r: rg.r1, c: Math.min(rg.c2 + 1, tab.cols - 1), dx: 12, dy: 0 }, picked);
+    if (!chart) return 'Select the cells with the numbers to chart (with their labels and headers), then insert the chart.';
+    this.addChart(chart);
+    this.editChart(id);
+    return null;
+  }
+
+  /** Add a chart to the active tab and select it. */
+  addChart(chart: Chart): boolean {
+    const tabId = this.tab.id;
+    const done = this.run((tx) => tx.setTabProp(tabId, 'charts', [...(tx.tab(tabId).charts ?? []), chart]));
+    if (done) this.selectChart(chart.id);
+    return done;
+  }
+
+  /** Change a chart of the active tab, as one undo step. */
+  updateChart(id: string, fn: (c: Chart) => Chart): boolean {
+    const tabId = this.tab.id;
+    const charts = this.charts;
+    const at = charts.findIndex((c) => c.id === id);
+    if (at < 0) return false;
+    const next = fn(charts[at]);
+    if (JSON.stringify(next) === JSON.stringify(charts[at])) return false;
+    return this.run((tx) => tx.setTabProp(tabId, 'charts', charts.map((c, i) => (i === at ? next : c))));
+  }
+
+  deleteChart(id: string): void {
+    const tabId = this.tab.id;
+    const charts = this.charts.filter((c) => c.id !== id);
+    if (charts.length === this.charts.length) return;
+    this.run((tx) => tx.setTabProp(tabId, 'charts', charts.length ? charts : undefined));
   }
 
   addTab(): void {

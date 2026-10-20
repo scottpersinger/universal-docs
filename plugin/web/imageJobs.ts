@@ -4,7 +4,7 @@
 import { EDITABLE_IMAGE_TYPES } from '../../shared/types.ts';
 import { activeImageEditor } from '../../client/src/image/activeEditor.ts';
 import { openHiddenEngine } from '../../client/src/image/hiddenEngine.ts';
-import { applyImageOps, type ImageOp } from '../../client/src/image/imageOps.ts';
+import { applyImageOps, ImageOpError, type ImageOp, type OverlayLoader } from '../../client/src/image/imageOps.ts';
 import { editedCopyName } from '../../client/src/image/limits.ts';
 import type { Host } from './host.ts';
 import { createPicture, loadPicture, replacePicture } from './imageStore.ts';
@@ -50,17 +50,33 @@ async function preview(image: Blob): Promise<{ preview_data: string; preview_typ
   return { preview_data: btoa(binary), preview_type: 'image/jpeg' };
 }
 
+/** Reads the stored pictures that overlays put on top, by file id. */
+const overlayLoader =
+  (host: Host): OverlayLoader =>
+  async (source) => {
+    const { file, data } = await loadPicture(host, source).catch(() => {
+      throw new ImageOpError(`There is no stored picture ${source} to put on top.`);
+    });
+    if (!data.type.startsWith('image/') || data.type === 'image/svg+xml') throw new ImageOpError(`${file.title} is not a picture that can be put on top (PNG, JPEG, GIF or WebP).`);
+    const bitmap = await createImageBitmap(data).catch(() => null);
+    if (!bitmap) throw new ImageOpError(`${file.title} could not be read as a picture.`);
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return { image: data, ...size };
+  };
+
 async function edit(host: Host, job: ImageJob): Promise<Done> {
+  const load = overlayLoader(host);
   const open = activeImageEditor(job.file_id);
   if (open) {
-    const applied = await open.engine.batch('Assistant edit', () => applyImageOps(open.engine, job.operations)).finally(() => open.refresh());
+    const applied = await open.engine.batch('Assistant edit', () => applyImageOps(open.engine, job.operations, undefined, load)).finally(() => open.refresh());
     return { applied, size: open.engine.getOutputSize(), file_id: job.file_id, saved: false, shown: await open.exportBlob() };
   }
   const { file, data } = await loadPicture(host, job.file_id);
   if (!EDITABLE_IMAGE_TYPES.includes(data.type)) throw new Error(`${file.title} cannot be edited: only PNG, JPEG and WebP pictures can.`);
   const hidden = await openHiddenEngine(data);
   try {
-    const applied = await applyImageOps(hidden.engine, job.operations, hidden.bake);
+    const applied = await applyImageOps(hidden.engine, job.operations, hidden.bake, load);
     const size = hidden.engine.getOutputSize();
     const result = await hidden.export(data.type);
     const saved = job.save === 'replace' ? await replacePicture(host, job.file_id, file.title, result) : await createPicture(host, editedCopyName(file.title), result);

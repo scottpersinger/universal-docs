@@ -2,6 +2,8 @@
 
 export type HAlign = 'left' | 'center' | 'right';
 
+import type { Chart } from './chart.ts';
+
 export type NumberFormat =
   | 'general'
   | 'number'
@@ -112,6 +114,8 @@ export interface Tab {
   frozenRows?: number;
   frozenCols?: number;
   filter?: FilterState;
+  /** Charts floating over the grid (shared/chart.ts). */
+  charts?: Chart[];
 }
 
 export interface Workbook {

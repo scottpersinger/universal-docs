@@ -5,6 +5,7 @@ import { isFormula } from '../formula/adjust.ts';
 import type { Engine } from '../formula/engine.ts';
 import type { CellStyle, Tab, Workbook } from '../types.ts';
 import { formatValue } from '../values.ts';
+import { chartOutline } from '../chart.ts';
 
 export interface SheetSource {
   workbook: Workbook;
@@ -76,6 +77,7 @@ export function sheetOverview(src: SheetSource, opts: { activeTabId?: string; se
         ...(tab.frozenRows ? { frozen_rows: tab.frozenRows } : {}),
         ...(tab.frozenCols ? { frozen_columns: tab.frozenCols } : {}),
         ...(tab.filter ? { filter_range: rangeToString(tab.filter) } : {}),
+        ...(tab.charts?.length ? { charts: tab.charts.map(chartOutline) } : {}),
         first_rows,
       };
     }),

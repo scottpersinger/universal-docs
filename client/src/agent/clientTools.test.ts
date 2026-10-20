@@ -9,6 +9,7 @@ import { confirmationFor, runClientTool, ToolError, type ClientToolEnv } from '.
 import type { AspEditorHandle } from '@ascentsparksoftware/react-image-editor';
 import { setActiveImageEditor } from '../image/activeEditor.ts';
 import { fakeEngine } from '../image/fakeEngine.ts';
+import { toolLabel } from './describe.ts';
 
 function setup(wb: Workbook = newWorkbook('t1')) {
   const ctl = new SheetController(wb, async () => {});
@@ -412,6 +413,55 @@ describe('stored files', () => {
     }
   });
 
+  it('puts an attached picture on top of a stored one in the image editor, where it stays a layer', async () => {
+    const { env, call } = setup();
+    const photo = { id: 'p', filename: 'photo.png', type: 'image/png', size: 10, createdAt: '2026-01-01', url: '/api/files/p', downloadUrl: '/api/files/p/download' };
+    const logo = '/api/images/0f8fad5b-d9cb-469f-a165-70867728950e';
+    env.readFile = async (id) => {
+      if (id !== 'p') throw new ToolError(`No file with id "${id}".`);
+      return { file: photo, data: new ArrayBuffer(4) };
+    };
+    env.readImage = async () => new Blob(['logo'], { type: 'image/png' });
+    env.imageSize = async () => ({ width: 400, height: 200 });
+    env.toAgentImage = async () => ({ mediaType: 'image/png', data: 'shown' });
+    env.attachImage = () => true;
+    let hidden = 0;
+    env.openImageEngine = async () => {
+      hidden++;
+      const made = fakeEngine(1000, 800);
+      return { engine: made.engine, bake: made.bake, export: async (type) => new Blob([made.log.join('; ')], { type }), close: async () => {} };
+    };
+    env.saveImageCopy = async () => photo;
+    env.saveImage = async () => photo;
+    // The editor the picture is opened in.
+    const live = fakeEngine(1000, 800);
+    const engine = Object.assign(live.engine, { batch: async <T,>(_label: string, fn: () => T | Promise<T>) => fn() });
+    const handle = { engine, refresh: () => {}, exportBlob: async () => new Blob(['edited'], { type: 'image/png' }) } as unknown as AspEditorHandle;
+    const opening: string[] = [];
+    env.openImageEditor = async (id) => (opening.push(id), handle);
+
+    const result = await call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: logo, x: 700, y: 650 }] });
+    expect(opening).toEqual(['p']);
+    expect(hidden).toBe(0);
+    // With no size it keeps its own, made smaller to stay inside the picture: 300 wide, the room to the right edge.
+    expect(live.log).toEqual(['image at 700,650 300x150']);
+    expect(result).toMatchObject({ saved: false, applied: ['Put a picture on top at 700, 650, 300 × 150'], note: expect.stringContaining('can still move, resize or delete it') });
+    expect(toolLabel('transform_image', { operations: [{ op: 'overlay' }] })).toBe('Put a picture on top of another');
+
+    // A size and opacity as given; a stored picture file by its id works as a source too.
+    await call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: 'p', x: 0, y: 0, width: 100, opacity: 40 }] });
+    expect(live.log.at(-1)).toBe('image at 0,0 100x50 opacity 0.4');
+    // Asked for a finished file, it is made off screen and saved, as other edits are.
+    await call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: logo, x: 0, y: 0 }], save: 'copy' });
+    expect(hidden).toBe(1);
+    expect(opening).toHaveLength(2);
+
+    await expect(call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', x: 0, y: 0 }] })).rejects.toThrow(/"source" is missing/);
+    await expect(call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: 'https://example.com/a.png', x: 0, y: 0 }] })).rejects.toThrow(/import_file/);
+    await expect(call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: 'nope', x: 0, y: 0 }] })).rejects.toThrow(/No file with id "nope"/);
+    await expect(call('transform_image', { file_id: 'p', operations: [{ op: 'overlay', source: logo, x: 2000, y: 0 }] })).rejects.toThrow(/outside the picture/);
+  });
+
   it('edits a text file with exact replacements, saving nothing unless every one matches', async () => {
     const { env, call } = setup();
     const file = { id: 'h', filename: 'index.html', type: 'text/html', size: 10, createdAt: '2026-01-01', url: '/api/files/h', downloadUrl: '/api/files/h/download' };
@@ -584,5 +634,85 @@ describe('Excel files (desktop app)', () => {
     ctl.store.guard = xlsxGuard;
     retry!();
     expect(ctl.tab.cells.A1).toEqual({ v: '', st: { b: true } });
+  });
+});
+
+describe('charts', () => {
+  const table = [
+    ['Date', 'Model', 'Input', 'Output'],
+    ['2023-03', 'gpt-4', 30, 60],
+    ['2024-05', 'gpt-4o', 5, 15],
+    ['2025-04', 'o3', 2, 8],
+  ];
+
+  it('adds a chart of a table, lists it in the overview, changes it and deletes it, each in the request’s undo step', async () => {
+    const { ctl, call, env } = setup();
+    await call('write_range', { start: 'A1', rows: table });
+    const added = await call('add_chart', { data_range: 'A1:D4', title: 'Prices', log_scale: true });
+    expect(added.added).toMatchObject({ type: 'line', at: 'E1', title: 'Prices', labels: 'A2:A4', log_scale: true, series: [{ values: 'C2:C4', name_cell: 'C1' }, { values: 'D2:D4', name_cell: 'D1' }] });
+    const id = added.added.id as string;
+    expect(ctl.selectedChart).toBe(id);
+    const overview = await call('get_sheet_overview');
+    expect(overview.tabs[0].charts).toEqual([added.added]);
+
+    await call('edit_chart', { chart_id: id, type: 'bar', series: [{ values: 'Sheet1!D2:D4', name: 'D1' }, { values: 'C2:C4', name: 'Input price', color: '#FF0000' }], at: 'B8', width: 400, log_scale: false, title: '' });
+    const chart = ctl.tab.charts![0];
+    expect(chart).toMatchObject({ type: 'bar', anchor: { r: 7, c: 1, dx: 0, dy: 0 }, w: 400, series: [{ values: 'D2:D4', nameRef: 'D1' }, { values: 'C2:C4', name: 'Input price', color: '#ff0000' }] });
+    expect(chart).not.toHaveProperty('title');
+    expect(chart).not.toHaveProperty('logScale');
+
+    await expect(call('edit_chart', { chart_id: 'nope', type: 'pie' })).rejects.toThrow(/no chart "nope"/);
+    await expect(call('edit_chart', { chart_id: id, series: [{ values: 'Nowhere!A1:A3' }] })).rejects.toThrow(/series 1: There is no tab named "Nowhere"/);
+    await expect(call('add_chart', { data_range: 'B1:B4' })).rejects.toThrow(/no numbers to chart/);
+    await expect(call('add_chart', { labels: 'A2:A4' })).rejects.toThrow(/Give data_range, or series/);
+
+    await call('delete_chart', { chart_id: id });
+    expect(ctl.tab.charts).toBeUndefined();
+    // The whole request is one step.
+    ctl.undo();
+    expect(ctl.tab.charts).toBeUndefined();
+    expect(ctl.store.display(ctl.tab.id, 0, 0)).toBe('');
+    void env;
+  });
+
+  it('keeps charts on their data when rows are inserted, tabs renamed and duplicated, and refuses them in a CSV file', async () => {
+    const { ctl, call } = setup();
+    await call('write_range', { start: 'A1', rows: table });
+    const { added } = await call('add_chart', { labels: 'A2:A4', series: [{ values: 'C2:C4' }] });
+    expect(added.at).toBe('D2');
+    ctl.selectCell({ r: 0, c: 0 });
+    ctl.insertRows('above');
+    expect(ctl.tab.charts![0]).toMatchObject({ anchor: { r: 2, c: 3 }, categories: 'A3:A5', series: [{ values: 'C3:C5' }] });
+    ctl.undo();
+    expect(ctl.tab.charts![0].categories).toBe('A2:A4');
+
+    // A chart on another tab follows a rename of the tab it reads.
+    ctl.addTab();
+    const second = ctl.tab;
+    await call('add_chart', { tab: second.name, labels: 'Sheet1!A2:A4', series: [{ values: 'Sheet1!C2:C4' }], at: 'A1' });
+    const first = ctl.store.workbook.tabs[0];
+    ctl.renameTab(first.id, 'Prices 2025');
+    expect(ctl.store.getTab(second.id)!.charts![0]).toMatchObject({ categories: "'Prices 2025'!A2:A4", series: [{ values: "'Prices 2025'!C2:C4" }] });
+
+    // A copy of a tab has its own charts, reading its own cells.
+    ctl.duplicateTab(first.id);
+    const copy = ctl.store.workbook.tabs.find((t) => t.name.startsWith('Copy of'))!;
+    expect(copy.charts![0].categories).toBe('A2:A4');
+    expect(copy.charts![0].id).not.toBe(ctl.store.getTab(first.id)!.charts![0].id);
+
+    const csv = setup(csvToWorkbook('a,b\n1,2\n3,4\n'));
+    csv.ctl.store.guard = csvGuard;
+    await expect(csv.call('add_chart', { data_range: 'A1:B3' })).rejects.toThrow(/this needs charts/);
+  });
+
+  it('charts the selection, or the data around one cell, from Insert › Chart', async () => {
+    const { ctl, call } = setup();
+    await call('write_range', { start: 'B2', rows: table });
+    ctl.selectCell({ r: 3, c: 2 });
+    expect(ctl.insertChart()).toBeNull();
+    expect(ctl.tab.charts![0]).toMatchObject({ categories: 'B3:B5', series: [{ values: 'D3:D5' }, { values: 'E3:E5' }], anchor: { r: 1, c: 5 } });
+    expect(ctl.chartEditor).toBe(ctl.tab.charts![0].id);
+    ctl.selectCell({ r: 20, c: 20 });
+    expect(ctl.insertChart()).toMatch(/Select the cells with the numbers/);
   });
 });

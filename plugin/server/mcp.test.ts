@@ -79,10 +79,12 @@ describe('MCP server', () => {
     const newer = (await v2.listTools()).tools;
     expect(v2.getServerVersion()?.version).toBe('0.3.0');
     expect(v2.getInstructions()).toContain('read_file');
-    const added = ['search_files', 'create_folder', 'move_file', 'upload_file', 'read_file', 'edit_file', 'convert_pdf_to_markdown'];
+    const added = ['search_files', 'create_folder', 'move_file', 'upload_file', 'read_file', 'edit_file', 'convert_pdf_to_markdown', 'add_chart', 'edit_chart', 'delete_chart'];
     expect(newer.map((t) => t.name).filter((n) => !tools.some((t) => t.name === n))).toEqual(added);
-    // Besides those, two tools differ: list_files knows about folders, and edit_elements places an arc by its own box or its center and radius.
-    expect(newer.filter((t) => !added.includes(t.name) && JSON.stringify(t) !== JSON.stringify(tools.find((o) => o.name === t.name))).map((t) => t.name)).toEqual(['list_files', 'edit_elements']);
+    // Besides those, three tools differ: list_files knows about folders, transform_image puts pictures on top, and edit_elements places an arc by its own box or its center and radius.
+    expect(newer.filter((t) => !added.includes(t.name) && JSON.stringify(t) !== JSON.stringify(tools.find((o) => o.name === t.name))).map((t) => t.name)).toEqual(['list_files', 'transform_image', 'edit_elements']);
+    expect(newer.find((t) => t.name === 'transform_image')?.inputSchema.properties).toHaveProperty('overlays');
+    expect(tools.find((t) => t.name === 'transform_image')?.inputSchema.properties).not.toHaveProperty('overlays');
     await v2.close();
   });
 
@@ -463,6 +465,18 @@ describe('MCP server', () => {
     await call('image_job_result', { job_id: failed![0].id, ok: false, error: 'Operation 1 (crop): That rectangle is outside the picture, which is 1 × 1 pixels at this point.' });
     expect(await failing).toMatchObject({ isError: true, text: expect.stringContaining('outside the picture') });
     expect((await call('transform_image', { file_id: 'nope', flip: 'horizontal' })).text).toMatch(/no file nope/);
+    // Version 2 puts pictures on top: an overlay operation for the app, with the picture by its file id.
+    const v2edit = await connect(2);
+    const overlaying = call('transform_image', { file_id: imgId, overlays: [{ file_id: imgId, x: 0, y: 0, width: 1 }] }, v2edit);
+    let overlayJobs: typeof jobs;
+    for (let i = 0; i < 50 && !overlayJobs; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      overlayJobs = (await call('app_state')).data?.jobs as typeof jobs;
+    }
+    expect(overlayJobs).toMatchObject([{ file_id: imgId, operations: [{ op: 'overlay', source: imgId, x: 0, y: 0, width: 1 }], save: 'copy' }]);
+    await call('image_job_result', { job_id: overlayJobs![0].id, ok: true, applied: ['Put a picture on top at 0, 0, 1 × 1'], file_id: copy.file.id, saved: true });
+    expect((await overlaying).data).toMatchObject({ edited: true, applied: ['Put a picture on top at 0, 0, 1 × 1'] });
+    await v2edit.close();
     // Removing a background is for the full app: said at once, with nothing handed to the app and nothing changed.
     const noRemoval = await call('transform_image', { file_id: imgId, rotate: 90, remove_background: true });
     expect(noRemoval).toMatchObject({ isError: true, text: expect.stringMatching(/only available in the full Universal Docs app.*Nothing was changed/) });

@@ -10,8 +10,30 @@ import { boxFromEnds, compactLine, DEFAULT_LINE_WIDTH, lineEnds, lineGeometry, n
 import { clickTarget, elementsInBox, frameUnderPointer } from '../../../shared/deckHit.ts';
 import { CropOverlay } from './CropOverlay.tsx';
 import { arcGeometry, arcTightBox, type ArcGeom } from '../../../shared/shapes.ts';
+import { colShares } from '../../../shared/deckTable.ts';
 import type { DeckController } from './controller.ts';
-import { LineDrawing, SlideView, type BoxPreview } from './SlideView.tsx';
+import { LineDrawing, SlideView, type BoxPreview, type TableCellState } from './SlideView.tsx';
+
+/** The table cell (row, column) under a pointer event, if it is on one. */
+function cellAt(e: { target: EventTarget | null }): { r: number; c: number } | null {
+  const td = (e.target as Element | null)?.closest?.('[data-cell]');
+  const m = td && /^(\d+):(\d+)$/.exec(td.getAttribute('data-cell') ?? '');
+  return m ? { r: Number(m[1]), c: Number(m[2]) } : null;
+}
+
+/** Dragging the border between two columns of a table. */
+interface ColDrag {
+  id: string;
+  /** The border's index: between column i - 1 and column i. */
+  i: number;
+  startX: number;
+  shares: number[];
+  /** The widths as the drag leaves them. */
+  cols: number[];
+}
+
+/** The narrowest a column can be dragged, as a share of the table. */
+const MIN_COL = 0.04;
 
 /** Dragging a line: drawing a new one, moving one of its ends, or its middle (an elbow's bend). */
 /** A selection box being drawn, by where the press was and where the pointer is, on the screen. */
@@ -55,6 +77,8 @@ interface Drag {
   moved: boolean;
   /** Set when the press began on an already-selected text box: a click without movement edits it at the click point. */
   clickEdit?: string;
+  /** The same for a cell of an already-selected table: a click without movement edits the cell. */
+  clickCell?: { id: string; r: number; c: number };
 }
 
 const MIN_SIZE = 10;
@@ -276,6 +300,7 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
         caretRef.current = { x: e.clientX, y: e.clientY };
         ctl.startEditing(d.clickEdit);
       }
+      if (d && !d.moved && d.clickCell && e.detail < 2) ctl.selectCell(d.clickCell.id, d.clickCell.r, d.clickCell.c, true);
       if (!d?.moved) return;
       if (d.kind === 'move') {
         const to: Record<string, { x: number; y: number }> = {};
@@ -354,7 +379,16 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
 
   /** A press that is for this element: select it (or add it to the selection) and be ready to drag it. */
   const pressElement = (e: ReactMouseEvent, el: SlideElement) => {
-    if (ctl.editing === el.id) return;
+    const cell = el.type === 'table' ? cellAt(e) : null;
+    if (ctl.editing === el.id) {
+      // In a table being edited, a press on another cell edits that one.
+      const cur = ctl.tableCell;
+      if (cell && cur && (cell.r !== cur.r || cell.c !== cur.c)) {
+        e.preventDefault();
+        ctl.selectCell(el.id, cell.r, cell.c, true);
+      }
+      return;
+    }
     const wasSelected = ctl.selection.length === 1 && ctl.selection[0] === el.id;
     caretRef.current = null;
     if (ctl.editing) ctl.stopEditing();
@@ -367,20 +401,28 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
       ctl.select(ids);
     } else {
       ids = ctl.selection.includes(el.id) ? ctl.selection : [el.id];
-      if (ids !== ctl.selection) ctl.select(ids);
+      // A press on a table's cell makes it the current cell, which the table commands act on.
+      if (cell && (ids.length === 1 || !ctl.selection.includes(el.id))) {
+        ids = [el.id];
+        ctl.selectCell(el.id, cell.r, cell.c);
+      } else if (ids !== ctl.selection) ctl.select(ids);
     }
     e.preventDefault();
     if (ids.length) {
       beginDrag(e, 'move', ids);
       // Clicking the text of an already-selected box (a link instead shows its menu) enters edit mode on release.
       if (wasSelected && !e.shiftKey && (el.type === 'text' || el.type === 'shape') && !(e.target as Element).closest?.('a.sl-link')) dragRef.current!.clickEdit = el.id;
+      if (wasSelected && !e.shiftKey && cell) dragRef.current!.clickCell = { id: el.id, ...cell };
     }
   };
 
   const onElementDoubleClick = (e: ReactMouseEvent, hit: SlideElement) => {
     const el = through(e, hit);
     if (el.type === 'text' || el.type === 'shape') ctl.startEditing(el.id);
-    else if (el.type === 'image') onEditImage?.(el.id);
+    else if (el.type === 'table') {
+      const cell = cellAt(e);
+      if (cell) ctl.selectCell(el.id, cell.r, cell.c, true);
+    } else if (el.type === 'image') onEditImage?.(el.id);
     else if (el.type === 'video') setPlaying(el.id);
   };
 
@@ -408,6 +450,60 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
         onStop: () => ctl.stopEditing(),
       }
     : null;
+
+  const cur = ctl.tableCell && ctl.selection.length === 1 && ctl.selection[0] === ctl.tableCell.id ? ctl.tableCell : null;
+  const tableCell: TableCellState | null = cur
+    ? {
+        ...cur,
+        ...(ctl.editing === cur.id
+          ? {
+              editing: {
+                onCommit: (text: string) => ctl.setCellText(cur.id, cur.r, cur.c, text),
+                onMove: (step: 1 | -1) => ctl.moveCell(step),
+                onStop: () => {
+                  ctl.stopEditing();
+                  wrapRef.current?.focus();
+                },
+              },
+            }
+          : {}),
+      }
+    : null;
+
+  // --- Table columns: dragging the border between two ---
+  const [colDrag, setColDrag] = useState<ColDrag | null>(null);
+  const colRef = useRef<ColDrag | null>(null);
+  const setCd = (d: ColDrag | null) => {
+    colRef.current = d;
+    setColDrag(d);
+  };
+  useEffect(() => {
+    if (!colDrag) return;
+    const onMove = (e: MouseEvent) => {
+      const d = colRef.current;
+      const el = slide.elements.find((x) => x.id === d?.id);
+      if (!d || !el || el.w <= 0) return;
+      const pair = d.shares[d.i - 1] + d.shares[d.i];
+      const left = Math.max(MIN_COL, Math.min(pair - MIN_COL, d.shares[d.i - 1] + (e.clientX - d.startX) / scale / el.w));
+      const cols = [...d.shares];
+      cols[d.i - 1] = left;
+      cols[d.i] = pair - left;
+      setCd({ ...d, cols });
+    };
+    const onUp = () => {
+      const d = colRef.current;
+      setCd(null);
+      if (d && d.cols.some((w, i) => Math.abs(w - d.shares[i]) > 1e-4)) ctl.setTableOptions({ cols: d.cols });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!colDrag, scale]);
+  const shown = colDrag ? { ...slide, elements: slide.elements.map((x) => (x.id === colDrag.id && x.type === 'table' ? { ...x, cols: colDrag.cols } : x)) } : slide;
 
   // The prompt to the assistant sits under the selected elements, or at the top of the slide when nothing is selected.
   const [, setTick] = useState(0);
@@ -482,7 +578,7 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
         onImageFiles(files);
       }}
     >
-      <SlideView slide={slide} theme={ctl.deck.theme} scale={scale} preview={preview} editing={editing} onElementMouseDown={onElementMouseDown} onElementDoubleClick={onElementDoubleClick} playVideo={playing} className="deck-canvas-slide">
+      <SlideView slide={shown} theme={ctl.deck.theme} scale={scale} preview={preview} editing={editing} tableCell={tableCell} onElementMouseDown={onElementMouseDown} onElementDoubleClick={onElementDoubleClick} playVideo={playing} className="deck-canvas-slide">
         {lineDrag?.mode === 'draw' && (
           <div className="sl-el" style={{ left: lineDrag.line.x, top: lineDrag.line.y, width: lineDrag.line.w, height: lineDrag.line.h, pointerEvents: 'none' }}>
             <LineDrawing el={lineDrag.line} theme={theme} />
@@ -526,6 +622,34 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
           const b = boxOf(el);
           return <div key={el.id} className="sl-outline" style={{ left: b.x, top: b.y, width: b.w, height: b.h, borderWidth: 1.5 / scale, ...(el.rot ? { transform: `rotate(${el.rot}deg)` } : {}) }} />;
         })}
+        {single?.type === 'table' &&
+          !single.rot &&
+          (() => {
+            // A grip on each border between two columns; dragging it moves the border.
+            const b = boxOf(single);
+            const shares = colDrag?.id === single.id ? colDrag.cols : colShares(single);
+            let at = 0;
+            return shares.slice(0, -1).map((w, k) => {
+              at += w;
+              const i = k + 1;
+              return (
+                <div
+                  key={`col-${i}`}
+                  className="sl-col-grip"
+                  style={{ left: b.x + at * b.w - 4 / scale, top: b.y, width: 8 / scale, height: b.h }}
+                  title="Drag to change the column widths"
+                  onMouseDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    wrapRef.current?.focus();
+                    const start = colShares(single);
+                    setCd({ id: single.id, i, startX: e.clientX, shares: start, cols: start });
+                  }}
+                />
+              );
+            });
+          })()}
         {single?.type === 'shape' &&
           single.shape === 'arc' &&
           (['start', 'end'] as const).map((end) => {

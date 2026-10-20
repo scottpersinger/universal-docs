@@ -66,6 +66,28 @@ describe('image operations', () => {
     expect(await fails({ op: 'sparkle' })).toMatch(/Unknown operation/);
   });
 
+  it('puts a picture on top: at its own size inside the picture, or as big as asked', async () => {
+    const { engine, log } = fakeEngine(800, 600);
+    const loaded: string[] = [];
+    const load = async (source: string) => (loaded.push(source), { image: new Blob(['logo']), width: 200, height: 100 });
+    const done = await applyImageOps(
+      engine,
+      [
+        { op: 'overlay', source: '/api/images/a', x: 10, y: 20 },
+        { op: 'overlay', source: '/api/images/a', x: 700, y: 0 },
+        { op: 'overlay', source: 'file1', x: 0, y: 0, height: 50, opacity: 50 },
+        { op: 'overlay', source: 'file1', x: 0, y: 0, width: 300, height: 30 },
+      ],
+      undefined,
+      load,
+    );
+    expect(log).toEqual(['image at 10,20 200x100', 'image at 700,0 100x50', 'image at 0,0 100x50 opacity 0.5', 'image at 0,0 300x30']);
+    expect(done[2]).toBe('Put a picture on top at 0, 0, 100 × 50, 50% opaque');
+    expect(loaded).toEqual(['/api/images/a', '/api/images/a', 'file1', 'file1']);
+    await expect(applyImageOps(engine, [{ op: 'overlay', source: 'x', x: 0, y: 0 }])).rejects.toThrow(/cannot be put on top here/);
+    await expect(applyImageOps(engine, [{ op: 'overlay', source: 'x', x: -500, y: 0 }], undefined, load)).rejects.toThrow(/outside the picture/);
+  });
+
   it('turns filters on once and off with none, and removes a background when it can', async () => {
     const { engine, log } = fakeEngine(800, 600, { backgroundRemoval: true });
     await applyImageOps(engine, [{ op: 'filter', name: 'grayscale' }, { op: 'filter', name: 'grayscale' }, { op: 'filter', name: 'none' }, { op: 'remove_background' }]);

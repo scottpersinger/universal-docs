@@ -1,9 +1,10 @@
 // Convert an uploaded .pptx file into a deck. Keeps text boxes (with bullets, sizes, colors, alignment, rotation,
 // outlined and capitalised text, including what they inherit from the master and layout), pictures (cropped and
 // cut to their shape), shapes, freeforms, gradients, lines with arrowheads, slide backgrounds, the artwork of the
-// slide's layout and master, and speaker notes. Tables become text boxes with rules between them, and SmartArt
-// the shapes PowerPoint last drew for it. Charts, picture color effects and animations are dropped and reported
-// as warnings.
+// slide's layout and master, and speaker notes. Tables become tables (ones with merged cells, which ours cannot
+// hold, text boxes with rules between them), charts become charts with the data the file keeps for them (of the
+// kinds ours can be), and SmartArt the shapes PowerPoint last drew for it. Other charts, picture color effects and
+// animations are dropped and reported as warnings.
 import { XMLParser } from 'fast-xml-parser';
 import JSZip from 'jszip';
 import {
@@ -11,7 +12,11 @@ import {
   SLIDE_H,
   SLIDE_W,
   validateDeck,
+  validateElement,
+  MAX_TABLE_COLS,
+  MAX_TABLE_ROWS,
   type ArrowStyle,
+  type ChartElement,
   type ConnectionSite,
   type Deck,
   type ImageElement,
@@ -21,15 +26,20 @@ import {
   type ShapeElement,
   type Slide,
   type SlideElement,
+  type TableCell,
+  type TableElement,
+  type TableStyle,
   type TextElement,
   type TextRole,
   type TextRun,
   type TextStyle,
 } from '../shared/deck.ts';
 import { safeLinkUrl } from '../shared/links.ts';
-import { SHAPE_ID_RE } from '../shared/pptxExport.ts';
+import { CHART_SOURCE_EXT, SHAPE_ID_RE, TABLE_SOURCE_EXT } from '../shared/pptxExport.ts';
+import { readChartWithData } from './xlsxCharts.ts';
 import { shapeFromPptx, tightArc } from '../shared/shapes.ts';
 import { MAX_CELL_IMAGE_BYTES } from '../shared/types.ts';
+import { normalShares } from '../shared/deckTable.ts';
 import { ImportError, IMPORT_LIMITS } from './xlsxImport.ts';
 
 /** Stores an image for the importing user; returns its /api/images/... URL. */
@@ -338,9 +348,24 @@ class Importer {
       } else if (tag === 'p:graphicFrame') {
         const data = path(node, 'a:graphic', 'a:graphicData');
         const uri = attrs(data).uri ?? '';
-        if (uri.includes('/table')) this.table(node, child(data, 'a:tbl'), rels, inherit, group, out);
+        if (uri.includes('/table')) {
+          const made = out.length;
+          this.table(node, child(data, 'a:tbl'), rels, inherit, group, out);
+          const made1 = out[made];
+          if (out.length === made + 1 && made1.type === 'table') {
+            this.keepId(attrs(path(node, 'p:nvGraphicFramePr', 'p:cNvPr')).name, made1);
+            const source = tableSourceOf(node);
+            if (source) made1.source = source;
+          }
+        }
         else if (uri.includes('/diagram')) await this.diagram(node, data, rels, group, out);
-        else this.note(uri.includes('/chart') ? 'Charts were dropped.' : 'Embedded objects were dropped.');
+        else if (uri.includes('/chart')) {
+          const el = await this.chart(node, data, rels, group);
+          if (el) {
+            out.push(el);
+            this.keepId(attrs(path(node, 'p:nvGraphicFramePr', 'p:cNvPr')).name, el);
+          } else this.note('Some charts are of a kind this app cannot show and were dropped.');
+        } else this.note('Embedded objects were dropped.');
       }
     }
   }
@@ -358,6 +383,11 @@ class Importer {
     const xs = cols.reduce<number[]>((acc, w) => [...acc, acc[acc.length - 1] + w], [0]);
     const ys = heights.reduce<number[]>((acc, h) => [...acc, acc[acc.length - 1] + h], [0]);
     const at = (x0: number, y0: number, x1: number, y1: number) => this.place({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 0, false, false, inner);
+    const whole = this.tableElement(tbl, rows, cols, at(0, 0, xs[xs.length - 1], ys[ys.length - 1]), inherit);
+    if (whole) {
+      out.push(whole);
+      return;
+    }
     const fills: SlideElement[] = [];
     const texts: SlideElement[] = [];
     // Borders by position, so the edge two cells share is drawn once (the later cell's wins, as in PowerPoint).
@@ -413,8 +443,104 @@ class Importer {
     out.push(...fills, ...texts, ...lines);
   }
 
+  /**
+   * A table as one of our tables, with each cell's text, fill, alignment and the look of its first run. Null
+   * for what ours cannot hold (merged cells, a turned or mirrored frame, too many rows or columns); the caller
+   * then draws it from boxes and lines.
+   */
+  private tableElement(tbl: XNode | undefined, rows: XNode[], cols: number[], at: Placed, inherit: XNode[]): TableElement | null {
+    if (at.rot || at.flipH || at.flipV || rows.length > MAX_TABLE_ROWS || cols.length > MAX_TABLE_COLS) return null;
+    const defaults = { size: 1800, ...this.textDefaults(undefined, undefined, 'body', inherit), bullet: false };
+    const tblPr = attrs(child(tbl, 'a:tblPr'));
+    const header = truthy(tblPr.firstRow);
+    const banded = truthy(tblPr.bandRow);
+    const cells: TableCell[][] = [];
+    const sizes: number[] = [];
+    const fonts: string[] = [];
+    const borders: string[] = [];
+    let noBorders = 0;
+    for (const [r, row] of rows.entries()) {
+      const tcs = children(row, 'a:tc');
+      if (tcs.length !== cols.length) return null;
+      const out: TableCell[] = [];
+      for (const tc of tcs) {
+        const a = attrs(tc);
+        if ((num(a.gridSpan) ?? 1) > 1 || (num(a.rowSpan) ?? 1) > 1 || truthy(a.hMerge) || truthy(a.vMerge)) return null;
+        const tcPr = child(tc, 'a:tcPr');
+        const paragraphs = children(child(tc, 'a:txBody'), 'a:p');
+        const cell: TableCell = { text: paragraphs.map(paragraphText).join('\n').replace(/\n+$/, '') };
+        const first = paragraphs.find((p) => paragraphText(p).trim() !== '') ?? paragraphs[0];
+        const props = first ? this.runProps(first, defaults, 1) : null;
+        if (props?.size) sizes.push(props.size);
+        if (props?.font) fonts.push(props.font);
+        if (props?.bold !== undefined && props.bold !== (header && r === 0)) cell.bold = props.bold;
+        if (props?.italic) cell.italic = true;
+        if (props?.color && !this.isTextColor(props.color)) cell.color = props.color;
+        const algn = attrs(child(first, 'a:pPr')).algn;
+        if (algn === 'ctr') cell.align = 'center';
+        else if (algn === 'r') cell.align = 'right';
+        const fill = this.colorOf(tcPr);
+        if (fill && fill !== 'none') cell.fill = fill;
+        for (const side of ['a:lnL', 'a:lnR', 'a:lnT', 'a:lnB']) {
+          const ln = child(tcPr, side);
+          const color = this.solidColor(ln);
+          if (color) borders.push(color);
+          else if (child(ln, 'a:noFill')) noBorders++;
+        }
+        out.push(cell);
+      }
+      cells.push(out);
+    }
+    const common = <T,>(list: T[]): T | undefined => {
+      const counts = new Map<T, number>();
+      for (const v of list) counts.set(v, (counts.get(v) ?? 0) + 1);
+      return [...counts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    };
+    const style: TableStyle = {};
+    const size = common(sizes);
+    if (size && size !== 16) style.size = size;
+    const font = common(fonts);
+    if (font) style.font = font;
+    // The borders most cells have; none when the file turns them all off.
+    const border = common(borders);
+    if (border) style.border = border;
+    else if (noBorders) style.border = 'none';
+    const el: TableElement = { id: this.nextId(), type: 'table', ...boxOf(at), rows: cells };
+    const shares = normalShares(cols);
+    if (shares) el.cols = shares;
+    if (header) el.header = true;
+    if (banded) el.banded = true;
+    if (Object.keys(style).length) el.style = style;
+    return validateElement(el, 'table') ? null : el;
+  }
+
   private rule(p: Placed, color: string, width: number): LineElement {
     return { id: this.nextId(), type: 'line', kind: 'straight', ...boxOf(p), strokeColor: color, strokeWidth: width };
+  }
+
+  /**
+   * A chart: a slide chart with the data the file keeps for it (the chart's caches), and, for one the app
+   * wrote, the spreadsheet chart it shows. Null for a kind ours cannot be, or a turned frame.
+   */
+  private async chart(frame: XNode, data: XNode | undefined, rels: Rel[], group: GroupTransform | null): Promise<ChartElement | null> {
+    const rid = attrs(child(data, 'c:chart'))['r:id'];
+    const target = rels.find((r) => r.id === rid)?.target;
+    const xml = target ? await this.zip.file(target)?.async('string') : undefined;
+    const read = xml ? readChartWithData(xml) : null;
+    const at = this.placed(child(frame, 'p:xfrm'), group);
+    if (!read || !at || at.rot) return null;
+    const el: ChartElement = { id: this.nextId(), type: 'chart', ...boxOf(at), chart: read.chart, data: read.data };
+    const ext = children(path(frame, 'p:nvGraphicFramePr', 'p:nvPr', 'p:extLst'), 'p:ext').find((e) => attrs(e).uri === CHART_SOURCE_EXT);
+    const link = attrs(child(ext, 'ud:chartSource')).data;
+    if (link) {
+      try {
+        const source = JSON.parse(decodeURIComponent(link)) as ChartElement['source'];
+        if (!validateElement({ ...el, source }, 'chart')) el.source = source;
+      } catch {
+        // not a link of ours
+      }
+    }
+    return validateElement(el, 'chart') ? null : el;
   }
 
   /** SmartArt: the shapes PowerPoint saved for it (its drawing part), placed inside the frame. */
@@ -1439,6 +1565,20 @@ function paragraphText(p: XNode): string {
     else if (t === 'a:br') out += '\n';
   }
   return out;
+}
+
+/** The spreadsheet range a table written by the app is linked to (shared/pptxExport.ts writePptx), if it is. */
+function tableSourceOf(frame: XNode): TableElement['source'] {
+  const ext = children(path(frame, 'p:nvGraphicFramePr', 'p:nvPr', 'p:extLst'), 'p:ext').find((e) => attrs(e).uri === TABLE_SOURCE_EXT);
+  const data = attrs(child(ext, 'ud:tableSource')).data;
+  if (!data) return undefined;
+  try {
+    const source = JSON.parse(decodeURIComponent(data)) as TableElement['source'];
+    const probe: TableElement = { id: 'probe', type: 'table', x: 0, y: 0, w: 10, h: 10, rows: [[{ text: '' }]], source };
+    return validateElement(probe, 'table') ? undefined : source;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Presets that are lines or connectors. */

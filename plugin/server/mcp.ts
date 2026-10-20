@@ -149,6 +149,9 @@ const ANNOTATIONS: Record<EditTool, { readOnlyHint: boolean; destructiveHint: bo
   set_cell_image: { readOnlyHint: false, destructiveHint: true },
   set_cell_link: { readOnlyHint: false, destructiveHint: true },
   set_filter: { readOnlyHint: false, destructiveHint: false },
+  add_chart: { readOnlyHint: false, destructiveHint: false },
+  edit_chart: { readOnlyHint: false, destructiveHint: false },
+  delete_chart: { readOnlyHint: false, destructiveHint: true },
   set_filter_criteria: { readOnlyHint: false, destructiveHint: false },
   set_column_width: { readOnlyHint: false, destructiveHint: false },
   set_row_height: { readOnlyHint: false, destructiveHint: false },
@@ -793,6 +796,29 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
       .max(10)
       .optional()
       .describe('Text to write on the picture.'),
+    // Version 2: pictures put on top (a logo, a signature, a screenshot), each a stored picture uploaded first.
+    ...(version >= 2
+      ? {
+          overlays: z
+            .array(
+              z.object({
+                file_id: fileId.describe('The picture to put on top: a stored picture (PNG, JPEG, GIF or WebP). A picture on your own computer is uploaded first with upload_file.'),
+                x: px('Left edge of the picture on top, in pixels from the left of the picture.'),
+                y: px('Top edge of the picture on top, in pixels from the top of the picture.'),
+                width: z.number().positive().optional().describe('Its width in pixels; the height keeps its shape. With no width or height it keeps its own size, made smaller to stay inside the picture.'),
+                height: z.number().positive().optional().describe('Its height in pixels. Give both width and height to stretch it.'),
+                opacity: z.number().min(0).max(100).optional().describe('How solid it is, in percent. Default 100.'),
+              }),
+            )
+            .max(10)
+            .optional()
+            .describe(
+              opts.local
+                ? 'Pictures to put on top of this one, after the other changes. Each is a layer of its own: with no save given, the picture is opened in the app’s image editor and the edit made there, so the user can still move and resize the pictures on top before saving. Give save only when the user wants a finished file now.'
+                : 'Pictures to put on top of this one, after the other changes, flattened into the result (in the image editor the user has open, they stay layers that can still be moved and resized).',
+            ),
+        }
+      : {}),
     resize_width: z.number().positive().optional().describe('Scale the finished picture down to this width in pixels; the height follows. Never up.'),
     remove_background: z
       .boolean()
@@ -817,6 +843,7 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
       ...list(e.redact).map((r) => ({ op: 'redact', ...r })),
       ...list(e.shapes).map((sh) => ({ op: 'shape', ...sh })),
       ...list(e.text).map((t) => ({ op: 'text', ...t })),
+      ...list(e.overlays).map(({ file_id, ...o }) => ({ op: 'overlay', source: file_id, ...o })),
       ...(e.resize_width ? [{ op: 'resize', width: e.resize_width }] : []),
     ];
   };
@@ -826,7 +853,9 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
     {
       title: 'Edit a picture',
       description:
-        "Edit a stored picture (PNG, JPEG or WebP) exactly, with the app's image editor. Give the changes to make: crop, rotate, straighten, flip, adjust the colors, a filter, rectangles to redact, shapes and arrows to draw, text to write, and a width to resize to. They are applied in that order, as one edit, and every pixel you do not name stays as it was. Call view_image first: it reports the picture's width and height. Positions are in pixels of the picture; for redact, shapes and text they are pixels of the picture after any crop, rotation or flip in the same call. By default the result is saved as a new file and the original is kept. The result comes back as a picture: look at it, and if something landed in the wrong place call transform_image again on the original with better numbers. The editing is done by the app, so it must be showing: call open_file with the picture first. If the user has the picture open in the app's image editor, the edit is made there as one undo step and is saved when the user saves.",
+        version === 1
+          ? "Edit a stored picture (PNG, JPEG or WebP) exactly, with the app's image editor. Give the changes to make: crop, rotate, straighten, flip, adjust the colors, a filter, rectangles to redact, shapes and arrows to draw, text to write, and a width to resize to. They are applied in that order, as one edit, and every pixel you do not name stays as it was. Call view_image first: it reports the picture's width and height. Positions are in pixels of the picture; for redact, shapes and text they are pixels of the picture after any crop, rotation or flip in the same call. By default the result is saved as a new file and the original is kept. The result comes back as a picture: look at it, and if something landed in the wrong place call transform_image again on the original with better numbers. The editing is done by the app, so it must be showing: call open_file with the picture first. If the user has the picture open in the app's image editor, the edit is made there as one undo step and is saved when the user saves."
+          : "Edit a stored picture (PNG, JPEG or WebP) exactly, with the app's image editor. Give the changes to make: crop, rotate, straighten, flip, adjust the colors, a filter, rectangles to redact, shapes and arrows to draw, text to write, pictures to put on top (overlays: a logo, a signature, a screenshot), and a width to resize to. They are applied in that order, as one edit, and every pixel you do not name stays as it was. Call view_image first: it reports the picture's width and height. Positions are in pixels of the picture; for redact, shapes and text they are pixels of the picture after any crop, rotation or flip in the same call. By default the result is saved as a new file and the original is kept. The result comes back as a picture: look at it, and if something landed in the wrong place call transform_image again on the original with better numbers. The editing is done by the app, so it must be showing: call open_file with the picture first. If the user has the picture open in the app's image editor, the edit is made there as one undo step and is saved when the user saves.",
       inputSchema: pictureEdit,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -838,8 +867,10 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
         // In the desktop app its window edits the picture with the app's full image editor, background removal included.
         if (opts.local) {
           const steps = withBackgroundRemoval(operations, !!remove_background);
-          if (!steps.length) throw new ToolError('Give at least one change to make: crop, rotate, straighten, flip, adjust, filter, redact, shapes, text, resize_width or remove_background.');
-          const r = await service.editImageInWindow({ file_id, operations: steps, save: save === 'replace' ? 'replace' : 'copy' });
+          if (!steps.length) throw new ToolError('Give at least one change to make: crop, rotate, straighten, flip, adjust, filter, redact, shapes, text, overlays, resize_width or remove_background.');
+          // Pictures put on top stay layers in the window's image editor unless a finished file is asked for.
+          const layered = save === undefined && steps.some((op) => op.op === 'overlay');
+          const r = await service.editImageInWindow({ file_id, operations: steps, ...(layered ? {} : { save: save === 'replace' ? 'replace' : 'copy' }) });
           if (!r) return fail(`The ${appName(true)} window is not open, and it edits the picture. Open the app, then try again.`);
           return windowResult(r);
         }
@@ -849,7 +880,7 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
           const where = opts.publicUrl ? ` Open ${f.meta.filename} there: ${opts.publicUrl}/f/${encodeURIComponent(f.meta.id)} , choose Edit, then Magic and Remove background (or ask the assistant there).` : '';
           throw new ToolError(`Removing a background is only available in the full ${appName(!!opts.local)} app, not here.${where} Nothing was changed. The other changes can be made here: call transform_image again without remove_background.`);
         }
-        if (!operations.length) throw new ToolError('Give at least one change to make: crop, rotate, straighten, flip, adjust, filter, redact, shapes, text or resize_width.');
+        if (!operations.length) throw new ToolError('Give at least one change to make: crop, rotate, straighten, flip, adjust, filter, redact, shapes, text, overlays or resize_width.');
         const r = await service.runImageJob(file_id, operations, save === 'replace' ? 'replace' : 'copy');
         if (!r.ok) return fail(r.error ?? 'The picture could not be edited.');
         const resultId = r.file_id ?? file_id;
@@ -962,7 +993,8 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
   for (const name of DECK_EDIT_TOOLS) {
     server.registerTool(
       name,
-      { description: describe(name), inputSchema: { ...(name === 'edit_elements' && version === 1 ? editElementsV1 : schemas[name]).shape, deck_id: optionalDeckId }, annotations: { ...ANNOTATIONS[name], openWorldHint: false } },
+      // Version 1's edit_elements stays as it was submitted (no tables).
+      { description: name === 'edit_elements' && version === 1 ? (editElementsV1.description ?? '') : describe(name), inputSchema: { ...(name === 'edit_elements' && version === 1 ? editElementsV1 : schemas[name]).shape, deck_id: optionalDeckId }, annotations: { ...ANNOTATIONS[name], openWorldHint: false } },
       async (args: Record<string, unknown>) =>
         guard(async () => {
           const { deck_id, ...input } = args as Record<string, unknown> & { deck_id?: string };
@@ -974,6 +1006,8 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
   }
 
   for (const name of SHEET_EDIT_TOOLS) {
+    // Version 1 stays as it was submitted: it has no charts.
+    if (version === 1 && (name === 'add_chart' || name === 'edit_chart' || name === 'delete_chart')) continue;
     server.registerTool(
       name,
       { description: describe(name), inputSchema: { ...inputShape(name), sheet_id: optionalSheetId }, annotations: { ...ANNOTATIONS[name], openWorldHint: fetchesFromWeb(name) }, ...imageMeta(name) },

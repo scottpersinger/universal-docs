@@ -22,6 +22,7 @@ import {
 } from '../commands.ts';
 import { FilterMenu } from '../components/FilterMenu.tsx';
 import { ComparePanel } from '../components/ComparePanel.tsx';
+import { ChartEditor } from '../chart/ChartEditor.tsx';
 import { FindBar } from '../components/FindBar.tsx';
 import { FormulaBar } from '../components/FormulaBar.tsx';
 import { Logo } from '../components/Logo.tsx';
@@ -487,6 +488,7 @@ function Workbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta: Sh
           {ctl.search && <FindBar ctl={ctl} />}
         </div>
         {ctl.compare && <ComparePanel ctl={ctl} />}
+        {ctl.chartEditor && <ChartEditor ctl={ctl} />}
       </div>
       <TabBar host={host} />
 

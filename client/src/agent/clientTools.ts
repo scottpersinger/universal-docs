@@ -2,6 +2,7 @@
 // Edits go through SheetController.runAgent, so they recalculate, render and autosave like the user's
 // own edits, and everything from one agent request undoes as a single step.
 import { applyTextEdits, TextEditError } from '../../../shared/textEdits.ts';
+import { addChart, deleteChart, editChart } from './chartTools.ts';
 import { MAX_COLS, colToName, nameToCol, rangeToString, type Range } from '../../../shared/cellref.ts';
 import { IMAGE_MEDIA_TYPES, MAX_IMAGES_PER_MESSAGE, type AgentImage, type ClientToolCall } from '../../../shared/agent/protocol.ts';
 import { toCellInput, type FetchResult } from '../../../shared/connectors.ts';
@@ -493,6 +494,21 @@ export async function runClientTool(call: ClientToolCall, env: ClientToolEnv): P
       return JSON.stringify({ linked: `${tab.name}!${rangeToString(range)}`, url, label: ctl.store.display(tab.id, range.r1, range.c1) });
     }
 
+    case 'add_chart': {
+      const tab = tabOf(ctl, str(i.tab));
+      show(ctl, tab.id);
+      return addChart(ctl, tab, i, run);
+    }
+    case 'edit_chart': {
+      const tab = tabOf(ctl, str(i.tab));
+      show(ctl, tab.id);
+      return editChart(ctl, tab, i, run);
+    }
+    case 'delete_chart': {
+      const tab = tabOf(ctl, str(i.tab));
+      show(ctl, tab.id);
+      return deleteChart(ctl, tab, i, run);
+    }
     case 'set_filter': {
       if (typeof i.range !== 'string') {
         const tab = tabOf(ctl, str(i.tab));

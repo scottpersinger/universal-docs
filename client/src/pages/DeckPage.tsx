@@ -27,9 +27,12 @@ import { DeckController, useDeckController } from '../deck/controller.ts';
 import { DeckEditor } from '../deck/DeckEditor.tsx';
 import { useDeckFonts } from '../deck/fonts.ts';
 import { useFavicon } from '../favicon.ts';
-import { DeckToolbar, LAYOUT_NAMES, shapeMenuItems } from '../deck/DeckToolbar.tsx';
+import { DeckToolbar, LAYOUT_NAMES, shapeMenuItems, tableMenuItems } from '../deck/DeckToolbar.tsx';
 import { downloadPptx } from '../deck/pptx.ts';
 import { VideoDialog } from '../components/VideoDialog.tsx';
+import { SheetTableDialog } from '../deck/SheetTableDialog.tsx';
+import { SheetChartDialog } from '../deck/SheetChartDialog.tsx';
+import { useLinkedTables } from '../deck/linkedTables.ts';
 import { PresentMode } from '../deck/PresentMode.tsx';
 import { checkPptxFile, pickPptxFile } from '../importFile.ts';
 import { SlideView } from '../deck/SlideView.tsx';
@@ -234,6 +237,10 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   // on the slide as one step, so undo brings the picture back as it was.
   const [editingImage, setEditingImage] = useState<string | null>(null);
   const [insertingVideo, setInsertingVideo] = useState(false);
+  const [insertingSheetTable, setInsertingSheetTable] = useState(false);
+  const [insertingSheetChart, setInsertingSheetChart] = useState(false);
+  // Tables linked to spreadsheet ranges follow them while the presentation is open.
+  const linked = useLinkedTables(ctl);
   const editedPicture = ctl.deck.slides.flatMap((s) => s.elements).find((e) => e.id === editingImage && e.type === 'image');
   const saveEditedImage = async (id: string, image: Blob, sizes: PictureSizes) => {
     const url = await uploadImageFile(image);
@@ -279,7 +286,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // A picture being cropped keeps the keys to itself (CropOverlay takes Enter and Escape).
-      if (ctl.presenting || ctl.cropping || imageDialogOpen() || isTyping(e.target)) return;
+      // Keys in a dialog (Table from spreadsheet's list, say) are the dialog's.
+      if (ctl.presenting || ctl.cropping || imageDialogOpen() || document.querySelector('.modal-backdrop') || isTyping(e.target)) return;
       const mod = isMac ? e.metaKey : e.ctrlKey;
       const k = e.key.toLowerCase();
       if (mod && k === 'z') {
@@ -334,7 +342,9 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         ctl.setPresenting(true);
       } else if (e.key === 'Enter' && ctl.selection.length === 1) {
         e.preventDefault();
-        ctl.startEditing(ctl.selection[0]);
+        // A table edits its current cell, or its first.
+        if (ctl.table) ctl.selectCell(ctl.table.id, ctl.tableCell?.r ?? 0, ctl.tableCell?.c ?? 0, true);
+        else ctl.startEditing(ctl.selection[0]);
       }
     };
     const onPaste = (e: ClipboardEvent) => {
@@ -461,6 +471,9 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         { label: 'Title', action: () => ctl.addText('title') },
         { label: 'Image…', action: () => void insertImage() },
         { label: 'Video…', action: () => setInsertingVideo(true) },
+        { label: 'Table', submenu: tableMenuItems(ctl) },
+        { label: 'Table from spreadsheet…', action: () => setInsertingSheetTable(true) },
+        { label: 'Chart from spreadsheet…', action: () => setInsertingSheetChart(true) },
         { label: 'Shape', submenu: shapeMenuItems(ctl) },
       ],
     },
@@ -550,7 +563,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
               <Account before={() => ctl.saver.flush()} />
             </div>
           </header>
-          <DeckToolbar ctl={ctl} onPresent={() => ctl.setPresenting(true)} onInsertImage={() => void insertImage()} onInsertVideo={() => setInsertingVideo(true)} onEditImage={setEditingImage} />
+          <DeckToolbar ctl={ctl} onPresent={() => ctl.setPresenting(true)} onInsertImage={() => void insertImage()} onInsertVideo={() => setInsertingVideo(true)} onEditImage={setEditingImage} onInsertSheetTable={() => setInsertingSheetTable(true)} linked={linked} onOpenSheet={(id) => navigate(`/s/${encodeURIComponent(id)}`)} />
           {importWarnings.length > 0 && (
             <div className="import-banner" role="status">
               <div>
@@ -594,6 +607,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
       )}
 
       {ctl.presenting && <PresentMode ctl={ctl} onExit={() => ctl.setPresenting(false)} />}
+      {insertingSheetChart && <SheetChartDialog onInsert={(id, chartId, c, keep) => ctl.addSheetChart(id, chartId, c, keep)} onClose={() => setInsertingSheetChart(false)} />}
+      {insertingSheetTable && <SheetTableDialog onInsert={(id, table, keep, used) => ctl.addSheetTable(id, table, keep, used)} onClose={() => setInsertingSheetTable(false)} />}
       {insertingVideo && <VideoDialog folder={meta.folder} onInsert={(src) => ctl.addVideo(src)} onClose={() => setInsertingVideo(false)} />}
       {editingImage && editedPicture?.type === 'image' && <ImageEditDialog backgroundRemovalLoader={loadBackgroundRemoval} src={editedPicture.src} name="picture" onSave={(image, sizes) => saveEditedImage(editingImage, image, sizes)} onClose={() => setEditingImage(null)} />}
 

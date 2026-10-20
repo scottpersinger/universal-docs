@@ -6,7 +6,8 @@ import { openGettingStarted } from '../../server/gettingStarted.ts';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { runClientTool, type ClientToolEnv } from '../../client/src/agent/clientTools.ts';
-import { runDeckTool } from '../../client/src/agent/deckTools.ts';
+import { linkDeckTables, runDeckTool } from '../../client/src/agent/deckTools.ts';
+import { loadLinkedChart, loadLinkedTable } from '../../server/linkedTable.ts';
 import { importExcel, ImportError } from '../../server/xlsxImport.ts';
 import { runDocTool } from '../../client/src/agent/docTools.ts';
 import { markdownToolProblem, runMarkdownTool } from '../../client/src/agent/markdownTools.ts';
@@ -194,6 +195,9 @@ export const SHEET_EDIT_TOOLS = [
   'set_column_width',
   'set_row_height',
   'freeze',
+  'add_chart',
+  'edit_chart',
+  'delete_chart',
   'add_tab',
   'rename_tab',
   'delete_tab',
@@ -899,7 +903,19 @@ export class FileService {
   }
 
   /** The same for a presentation and the app's deck tools. */
-  async editDeck(id: string, tool: DeckEditTool, input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async editDeck(id: string, tool: DeckEditTool, given: Record<string, unknown>): Promise<Record<string, unknown>> {
+    // A spreadsheet range a table is linked to is read here, so the tool has it in the window or headless.
+    const { input } = await linkDeckTables({ id: 'mcp', name: tool, input: given }, async (sheetId, ref) => {
+      const t = await loadLinkedTable(this.sheets, this.userId, sheetId, ref);
+      if (!t) throw new Error(`There is no spreadsheet ${sheetId}.`);
+      if (typeof t === 'string') throw new Error(t);
+      return t;
+    }, async (sheetId, chartId) => {
+      const c = await loadLinkedChart(this.sheets, this.userId, sheetId, chartId);
+      if (!c) throw new Error(`There is no spreadsheet ${sheetId}.`);
+      if (typeof c === 'string') throw new Error(c);
+      return c;
+    });
     const live = await this.runLive('deck', id, 'deck_id', tool, input);
     if (live) return live;
     const loaded = await this.sheets.loadDeck(this.userId, id);

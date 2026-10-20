@@ -35,7 +35,8 @@ changes are additive (new options default to upstream's behaviour) so rebasing s
 3. **Size limits as options.** `maxImportDim` (upstream fixes 4096 px: larger pictures are shrunk on
    opening) and `maxExportPixels` (upstream fixes 4096²).
 4. **Positioned operations**: `cropTo(rect)`, `addShapeAt(kind, style, { box } | { from, to })`,
-   `addTextBox(text, style, { x, y, width })`, `redactRect(rect, mode)`, `setOutputWidth(width)`,
+   `addTextBox(text, style, { x, y, width })`, `addImageAt(src, { x, y, width?, height? }, { opacity })` (a picture
+   on top, as a layer: the assistant's `overlay`), `redactRect(rect, mode)`, `setOutputWidth(width)`,
    `getOutputSize()`.
 5. **Output-pixel coordinates.** Those methods take pixels of the picture as it would export right now
    (after any crop or rotation), converted to the engine's scene in `engine/output-space.ts`. That is the

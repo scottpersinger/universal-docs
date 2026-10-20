@@ -32,6 +32,34 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   user's files) inserts one in either editor. It is drawn as its still until played (`VideoPlayer.tsx`; in a
   document, `VideoView` in `DocEditor.tsx`): a double-click on a slide, the play button in a document, and
   always in the show.
+- A table on a slide is an element of type `table` (`shared/deck.ts`): rows of text cells with their own look,
+  column shares, a header row and banding; `shared/deckTable.ts` has its operations and the colors both the
+  renderer (`SlideView`'s `TableView`) and the PowerPoint writer use. A cell is edited in place (`DeckController.selectCell`,
+  Tab moves on). It is written as a PowerPoint table (`writePptx` adds the header and banding flags pptxgenjs
+  cannot) and read back as one; a PowerPoint table with merged cells is still read as boxes and lines.
+  A table can be linked to a spreadsheet range (`TableElement.source`: a fixed range, or with `used` the tab's
+  used part, which it follows as it grows). Its cells are the range's values and look as last read
+  (`shared/sheetTable.ts`, `GET /api/sheets/:id/table`), so everything that draws or exports a table needs nothing
+  more; they are not edited on the slide. While a presentation is open `LinkedTableSync` (`client/src/deck/linkedTables.ts`)
+  follows each linked spreadsheet's revision feed and refreshes its tables as undo steps. Insert › Table from
+  spreadsheet… (`SheetTableDialog`) makes one, and the assistant's `edit_elements` takes `link`, read before the
+  tool runs by `linkDeckTables` (in `AgentProvider` and `FileService.editDeck`). In a PowerPoint file the source is
+  an extension in the table's frame (`TABLE_SOURCE_EXT`).
+- Charts (`shared/chart.ts`) float over a spreadsheet tab (`Tab.charts`): Excel's model (an anchor cell and
+  offset, a size in pixels, categories and series as ranges in formula syntax from the chart's own tab, so the
+  formula adjusters in `ops.ts` keep them on their data as rows, columns and tabs change). `chartData` reads what
+  one shows through the engine; `ChartView` (`client/src/chart/`) draws it as SVG (so it draws the same in
+  pictures and PDFs made from the DOM), `ChartLayer` puts the tab's charts over the grid's canvas (select, move,
+  resize, Delete) and `ChartEditor` is the panel beside it. Insert › Chart (`SheetController.insertChart`,
+  `suggestChart`) charts the selection. The assistant has `add_chart`, `edit_chart`, `delete_chart`
+  (`client/src/agent/chartTools.ts`) and sees charts in `get_sheet_overview`. ExcelJS neither reads nor writes
+  charts: `server/xlsxCharts.ts` adds the DrawingML parts after it writes a workbook and reads them on import
+  (kinds ours cannot be are counted as lost); it also hands ExcelJS the file without its drawings, which it can
+  fail on. A slide's `chart` element (`ChartElement`) is a sheet chart's look and data, linked to it
+  (`ChartSource`, `GET /api/sheets/:id/charts` and `/chart`, followed by `LinkedTableSync`); Insert › Chart from
+  spreadsheet… (`SheetChartDialog`) and `edit_elements` (type `chart`, `link: {sheet_id, chart_id}`) make one.
+  It is written as a native PowerPoint chart (pptxgenjs) with its link as an extension (`CHART_SOURCE_EXT`), and
+  a PowerPoint chart is read back from its cached data (`readChartWithData`).
 - CSV files are spreadsheets stored as CSV text (`shared/csv.ts`; `SheetMeta.format === 'csv'`, the `format`
   column in `server/sheets.ts`). `SheetStore.load` parses the text into a one-tab workbook and `save` writes
   CSV back for as long as the workbook holds only plain values, so everything that reads spreadsheets works
@@ -46,7 +74,8 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   the current directory) and loads it in a window. Each window (a tab, on macOS) shows one folder, and each folder
   open in a window has a server of its own, stopped when its last window closes; opening a folder (Open Folder…, a
   file of Recents outside it) changes only the window it was asked in. File › New Tab (⌘T, `newTab`) opens the
-  folder and list of the window in front. The servers' token cookies are on one host, so each has its own cookie
+  folder and list of the window in front. A right-click the page leaves alone gets the menu a browser would show (copy or
+  save a picture, links, text, spelling: `desktop/contextMenu.js`). The servers' token cookies are on one host, so each has its own cookie
   name (`local.cookie`, `LOCAL_COOKIE`). `buildApp({ local: { dir, token } })` swaps in the
   folder-backed stores of `server/localStore.ts` (`LocalSheetStore` and `LocalFileStore`, subclasses that
   override the on-disk hooks of `SheetStore` and `FileStore`: real `.md`/`.csv` files, `.ffsheet`/`.ffslides`/
@@ -114,7 +143,10 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   `PUT /api/files/:id`, which keeps the version before for one revert; Save a copy makes a new file).
   The assistant's `transform_image` (`client/src/agent/imageTools.ts`) applies its operations
   (`client/src/image/imageOps.ts`) with the same engine: in the open editor when the picture is open there
-  (`activeEditor.ts`), else in one off screen (`hiddenEngine.ts`). The engine needs a browser canvas, so tests
+  (`activeEditor.ts`), else in one off screen (`hiddenEngine.ts`). Its `overlay` puts another picture (an attached one
+  by its `/api/images/...` address, or a stored picture) on top as a layer (`engine.addImageAt`); on a stored picture
+  with no `save` it opens the file in the editor first (`openImageEditor`, `/f/<id>?edit=1`), so the user can still
+  move and resize it before saving. The engine needs a browser canvas, so tests
   use `fakeEngine.ts`. In the plugin the model's `transform_image` is a job the plugin's app takes with its
   state and does in the browser (`FileService.runImageJob`, `plugin/web/imageJobs.ts`).
   A picture inside a file is edited in `ImageEditDialog` over the page and never rewritten: the page uploads
@@ -130,6 +162,13 @@ assistant. The server runs TypeScript directly with Node's type stripping; impor
   `read_doc` on a stored PDF reads it, and Convert to Markdown (the PDF's page and its menu in the list,
   `POST /api/files/:id/markdown`), the assistant's `convert_pdf` and the MCP `convert_pdf_to_markdown` (version 2)
   make a Markdown file of it beside the PDF (`pdfToMarkdownFile`).
+- A PDF is signed on its page (Edit, `client/src/pdf/PdfSigner.tsx`): the pages drawn by pdf.js with the user's
+  signature, lines of text and dates placed over them, which `signPdf` (`shared/pdfSign.ts`, on `@cantoo/pdf-lib`)
+  writes into the page content (Helvetica text, the signature as a picture; positions in points from the top left of
+  the page as shown). Save rewrites the PDF (`PUT /api/files/:id`, keeping the version before; in the desktop app a
+  copy goes in the trash) and Save a copy makes `<name>-signed.pdf`. The signature is drawn, typed or uploaded in
+  `SignatureDialog` (signature_pad); a user keeps several, picked from the Sign menu (`server/signatures.ts`,
+  `/api/settings/signatures`; in the desktop app in its settings database).
 - A zip file's page lists what it holds and opens each file in it read-only (`client/src/components/ZipBrowser.tsx`,
   the folder and file in the address as `?dir=` / `?entry=`). The server never unpacks to disk
   (`server/zipView.ts`): `GET /api/files/:id/zip` lists the files, `/zip/entry?path=` sends one (inline only

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildSlide, newId, slideTitle, type Deck, type ImageElement, type LineElement, type ShapeElement, type TextElement } from '../shared/deck.ts';
-import { buildPptx, fontFace, hexColor } from '../shared/pptxExport.ts';
+import { buildSlide, newId, slideTitle, type Deck, type ImageElement, type LineElement, type ShapeElement, type TableElement, type TextElement, type ChartElement } from '../shared/deck.ts';
+import { fontFace, hexColor, writePptx } from '../shared/pptxExport.ts';
 import JSZip from 'jszip';
 import { importPptx, isPptx } from './pptxImport.ts';
 
@@ -8,9 +8,8 @@ import { importPptx, isPptx } from './pptxImport.ts';
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
 
 async function pptxBuffer(deck: Deck): Promise<{ buf: Buffer; warnings: string[] }> {
-  const { pres, warnings } = await buildPptx(deck, 'Round trip', async (src) => (src.startsWith('data:') ? src : null));
-  const out = (await pres.write({ outputType: 'nodebuffer' })) as Buffer;
-  return { buf: Buffer.from(out), warnings };
+  const { data, warnings } = await writePptx(deck, 'Round trip', async (src) => (src.startsWith('data:') ? src : null));
+  return { buf: Buffer.from(data), warnings };
 }
 
 const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
@@ -83,7 +82,8 @@ async function googleStylePptx(): Promise<Buffer> {
  * A designed template the way PowerPoint saves one: the look lives in the layout (a dark background, a freeform,
  * a turned title placeholder with outlined capitals, a round picture placeholder) and the slide only fills it in.
  */
-async function templatePptx(): Promise<Buffer> {
+/** A designed template; `merged` makes the table's first row one cell across both columns. */
+async function templatePptx(merged = false): Promise<Buffer> {
   const rels = (items: [string, string, string][]) =>
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items.map(([id, type, target]) => `<Relationship Id="${id}" Type="${REL}/${type}" Target="${target}"/>`).join('')}</Relationships>`;
   const xfrm = (x: number, y: number, cx: number, cy: number, extra = '') => `<a:xfrm${extra}><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`;
@@ -104,7 +104,7 @@ async function templatePptx(): Promise<Buffer> {
     `<p:sp>${nv(7, '<p:ph type="pic" idx="13"/>')}<p:spPr>${xfrm(4572000, 914400, 1828800, 1828800)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></p:spPr></p:sp>` +
     `<p:sp>${nv(8, '<p:ph idx="4"/>')}<p:spPr>${xfrm(4572000, 3200400, 3657600, 914400)}</p:spPr><p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr><a:lnSpc><a:spcPts val="2800"/></a:lnSpc><a:defRPr sz="1400"/></a:lvl1pPr></a:lstStyle><a:p/></p:txBody></p:sp>` +
     `</p:spTree></p:cSld></p:sldLayout>`;
-  const cell = (text: string, borders = '') => `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en" sz="1400"/><a:t>${text}</a:t></a:r></a:p></a:txBody><a:tcPr anchor="ctr">${borders}</a:tcPr></a:tc>`;
+  const cell = (text: string, borders = '', tc = '') => `<a:tc${tc}><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en" sz="1400"/><a:t>${text}</a:t></a:r></a:p></a:txBody><a:tcPr anchor="ctr">${borders}</a:tcPr></a:tc>`;
   const blue = (side: string) => `<a:${side} w="38100"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:${side}>`;
   const slide =
     `<p:sld ${NS}><p:cSld><p:spTree>` +
@@ -113,7 +113,7 @@ async function templatePptx(): Promise<Buffer> {
     `<p:sp>${nv(4, '<p:ph idx="4"/>')}<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en"/><a:t>One</a:t></a:r></a:p></p:txBody></p:sp>` +
     `<p:sp>${nv(5)}<p:spPr>${xfrm(6858000, 0, 2286000, 5143500, ' flipH="1"')}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:schemeClr val="tx1"><a:alpha val="0"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="tx1"/></a:gs></a:gsLst><a:lin ang="10800000"/></a:gradFill></p:spPr></p:sp>` +
     `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="6" name="t"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="914400" y="3657600"/><a:ext cx="1828800" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblGrid><a:gridCol w="914400"/><a:gridCol w="914400"/></a:tblGrid>` +
-    `<a:tr h="457200">${cell('A', blue('lnB'))}${cell('B', blue('lnB'))}</a:tr><a:tr h="457200">${cell('1', blue('lnT'))}${cell('2', blue('lnT'))}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>` +
+    `<a:tr h="457200">${merged ? `${cell('A', blue('lnB'), ' gridSpan="2"')}${cell('', blue('lnB'), ' hMerge="1"')}` : `${cell('A', blue('lnB'))}${cell('B', blue('lnB'))}`}</a:tr><a:tr h="457200">${cell('1', blue('lnT'))}${cell('2', blue('lnT'))}</a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>` +
     `</p:spTree></p:cSld></p:sld>`;
   const zip = new JSZip();
   zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');
@@ -157,12 +157,104 @@ describe('pptx export and import', () => {
     // A mirrored gradient runs the other way.
     const fade = els.find((e): e is ShapeElement => e.type === 'shape' && !!e.fill?.startsWith('linear-gradient'))!;
     expect(fade.fill).toBe('linear-gradient(90deg, rgba(0, 0, 0, 0) 0%, #000000 100%)');
-    // The table: a text box per cell and the one border the two rows share, drawn once across both columns.
-    const cells = els.filter((e): e is TextElement => e.type === 'text' && ['A', 'B', '1', '2'].includes(e.paragraphs[0].text));
-    expect(cells.map((c) => [c.paragraphs[0].text, c.style?.align, c.style?.valign])).toEqual([['A', 'center', 'middle'], ['B', 'center', 'middle'], ['1', 'center', 'middle'], ['2', 'center', 'middle']]);
+    // The table: one table element with its cells' text, alignment and size, and the border color it has.
+    const table = els.find((e): e is TableElement => e.type === 'table')!;
+    expect(table).toMatchObject({ x: 96, y: 384, w: 192, h: 96, style: { size: 19, border: '#0000ff' } });
+    expect(table.rows).toEqual([
+      [
+        { text: 'A', align: 'center' },
+        { text: 'B', align: 'center' },
+      ],
+      [
+        { text: '1', align: 'center' },
+        { text: '2', align: 'center' },
+      ],
+    ]);
+    expect(table.cols).toBeUndefined();
+    expect(els.some((e) => e.type === 'line')).toBe(false);
+  });
+
+  it('draws a table with merged cells, which ours cannot hold, as text boxes and the borders between them', async () => {
+    const { deck } = await importPptx(await templatePptx(true), async () => '/api/images/00000000-0000-0000-0000-000000000000');
+    const els = deck.slides[0].elements;
+    expect(els.some((e) => e.type === 'table')).toBe(false);
+    const cells = els.filter((e): e is TextElement => e.type === 'text' && ['A', '1', '2'].includes(e.paragraphs[0].text));
+    expect(cells.map((c) => [c.paragraphs[0].text, c.w, c.style?.align, c.style?.valign])).toEqual([['A', 173, 'center', 'middle'], ['1', 77, 'center', 'middle'], ['2', 77, 'center', 'middle']]);
     const rules = els.filter((e): e is LineElement => e.type === 'line');
     expect(rules).toHaveLength(1);
     expect(rules[0]).toMatchObject({ x: 96, y: 432, w: 192, h: 0, strokeColor: '#0000ff', strokeWidth: 4 });
+  });
+
+  it('round-trips tables: cells, their look, column widths, the header row and banding', async () => {
+    const s = buildSlide('blank', {}, newId);
+    const table: TableElement = {
+      id: newId(),
+      type: 'table',
+      x: 80,
+      y: 100,
+      w: 600,
+      h: 160,
+      cols: [0.5, 0.25, 0.25],
+      header: true,
+      banded: true,
+      style: { size: 20, font: 'Georgia', border: '#888888' },
+      rows: [
+        [{ text: 'Region' }, { text: 'Q1', align: 'right' }, { text: 'Q2', align: 'right' }],
+        [{ text: 'North\nand east' }, { text: '10', align: 'right' }, { text: '12', align: 'right' }],
+        [{ text: 'South' }, { text: '7', align: 'right' }, { text: '9', align: 'right', fill: '#ffeeaa', color: '#aa0000' }],
+        [{ text: 'Total', bold: true, italic: true }, { text: '17', align: 'right', bold: true }, { text: '21', align: 'right', bold: true }],
+      ],
+    };
+    s.elements.push(table);
+    const { buf, warnings } = await pptxBuffer({ version: 1, theme: 'light', slides: [s] });
+    expect(warnings).toEqual([]);
+    const back = (await importPptx(buf, async () => '/api/images/x')).deck.slides[0].elements.find((e): e is TableElement => e.type === 'table')!;
+    expect(back).toMatchObject({ id: table.id, x: 80, y: 100, w: 600, h: 160, header: true, banded: true, style: { size: 20, font: 'Georgia', border: '#888888' } });
+    expect(back.cols).toEqual([0.5, 0.25, 0.25]);
+    // The cells' text and own look come back; the header's and the bands' fills are written out on each cell.
+    expect(back.rows.map((r) => r.map((c) => c.text))).toEqual(table.rows.map((r) => r.map((c) => c.text)));
+    expect(back.rows[0][0]).toMatchObject({ fill: '#1a73e8', color: '#ffffff' });
+    expect(back.rows[0][0].bold).toBeUndefined();
+    expect(back.rows[2][2]).toMatchObject({ align: 'right', fill: '#ffeeaa', color: '#aa0000' });
+    expect(back.rows[3][0]).toMatchObject({ bold: true, italic: true });
+    expect(back.rows[1][0].fill).toBeUndefined();
+  });
+
+  it('round-trips charts as PowerPoint charts: their kind, data, titles and axes, and the spreadsheet chart they show', async () => {
+    const s = buildSlide('blank', {}, newId);
+    const data = { categories: ['Jan', 'Feb', 'Mar'], series: [{ name: 'Input', color: '#ff0000', points: [{ y: 10 }, { y: null }, { y: 0.5 }] }, { name: 'Output', color: '#ea4335', points: [{ y: 30 }, { y: 20 }, { y: 2 }] }], format: { fmt: 'currency' as const, dp: 2 } };
+    const line: ChartElement = { id: newId(), type: 'chart', x: 80, y: 60, w: 480, h: 300, chart: { id: 'c1', type: 'line', title: 'Prices', legend: 'bottom', logScale: true, yTitle: 'USD', series: [{ values: 'B2:B4' }, { values: 'C2:C4' }] }, data, source: { sheet: 'sheet-1', title: 'Figures', tabId: 't1', tab: 'Prices', chart: 'c1', rev: 'r1' } };
+    const bars: ChartElement = { id: newId(), type: 'chart', x: 600, y: 60, w: 300, h: 300, chart: { id: 'c2', type: 'bar', stacked: true, legend: 'none', series: [{ values: 'B2:B4' }] }, data: { categories: ['a', 'b'], series: [{ name: 'Units', color: '#4285f4', points: [{ y: 3 }, { y: 4 }] }] } };
+    s.elements.push(line, bars);
+    const { buf, warnings } = await pptxBuffer({ version: 1, theme: 'light', slides: [s] });
+    expect(warnings).toEqual([]);
+    const { deck, warnings: read } = await importPptx(buf, async () => '/api/images/x');
+    expect(read).toEqual([]);
+    const charts = deck.slides[0].elements.filter((e): e is ChartElement => e.type === 'chart');
+    const back = charts.find((c) => c.id === line.id)!;
+    expect(back).toMatchObject({ x: 80, y: 60, w: 480, h: 300, source: line.source, chart: { type: 'line', title: 'Prices', legend: 'bottom', logScale: true, yTitle: 'USD' } });
+    expect(back.data.categories).toEqual(['Jan', 'Feb', 'Mar']);
+    expect(back.data.series.map((x) => [x.name, x.points.map((p) => p.y)])).toEqual([
+      ['Input', [10, null, 0.5]],
+      ['Output', [30, 20, 2]],
+    ]);
+    expect(back.data.series[0].color).toBe('#ff0000');
+    const backBars = charts.find((c) => c.id === bars.id)!;
+    expect(backBars).toMatchObject({ chart: { type: 'bar', stacked: true, legend: 'none' } });
+    expect(backBars).not.toHaveProperty('source');
+  });
+
+  it('keeps the spreadsheet range a table is linked to', async () => {
+    const s = buildSlide('blank', {}, newId);
+    const source = { sheet: 'abc123', title: 'Q3 "final" & more', tabId: 't1', tab: 'Sales <EU>', range: 'A1:B2', rev: '2026-10-19T10:00:00.000Z' };
+    const table: TableElement = { id: newId(), type: 'table', x: 80, y: 100, w: 400, h: 80, rows: [[{ text: 'a' }, { text: 'b' }], [{ text: 'c' }, { text: 'd' }]], source };
+    const plain: TableElement = { ...table, id: newId(), y: 300, source: undefined };
+    delete plain.source;
+    s.elements.push(table, plain);
+    const { buf } = await pptxBuffer({ version: 1, theme: 'light', slides: [s] });
+    const tables = (await importPptx(buf, async () => '/api/images/x')).deck.slides[0].elements.filter((e): e is TableElement => e.type === 'table');
+    expect(tables.find((t) => t.id === table.id)?.source).toEqual(source);
+    expect(tables.find((t) => t.id === plain.id)).not.toHaveProperty('source');
   });
 
 

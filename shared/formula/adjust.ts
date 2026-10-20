@@ -60,7 +60,7 @@ export function shiftFormula(raw: string, dr: number, dc: number): string {
   });
 }
 
-type Axis = 'row' | 'col';
+export type Axis = 'row' | 'col';
 
 function axisKeys(axis: Axis) {
   return axis === 'row'

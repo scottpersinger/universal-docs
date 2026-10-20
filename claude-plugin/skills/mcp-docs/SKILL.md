@@ -68,6 +68,10 @@ on disk: the tools keep the formatting, show the change in the app, and are undo
 - **Pictures** (PNG, JPEG, WebP): look at one with `view_image`; crop, rotate, resize, adjust, annotate,
   redact or remove the background (`remove_background`) with `transform_image`, which saves a new file
   unless you ask to replace the original. The app's window does the editing, so it must be open.
+  To put one picture on top of another (a logo, a signature, a screenshot), upload it with `upload_file` if
+  it is on your computer, then pass its id in `transform_image`'s `overlays`. With no `save`, the picture
+  opens in the app's image editor with the overlay as a layer the person can still move and resize, and
+  they save it there; tell them so.
 
 Some things an Office file cannot hold (a picture inside a spreadsheet cell, a gradient, a video in a Word
 document). When a tool refuses one of those, tell the person: the app can keep the file in its own format

@@ -11,7 +11,7 @@ import { SlideView } from './SlideView.tsx';
 
 export interface OverflowItem {
   id: string;
-  type: 'text' | 'shape';
+  type: 'text' | 'shape' | 'table';
   /** The element's box and the size of its rendered text, in slide points. */
   box_w: number;
   box_h: number;
@@ -71,12 +71,12 @@ export async function renderSlideImage(slide: Slide, theme: ThemeId, scale: numb
   }
 }
 
-/** Text boxes and shape labels whose rendered text is larger than their box (1 point of tolerance). */
+/** Text boxes, shape labels and tables whose rendered text is larger than their box (1 point of tolerance). */
 export function measureOverflow(host: HTMLElement, slide: Slide): OverflowItem[] {
   const out: OverflowItem[] = [];
   for (const node of Array.from(host.querySelectorAll<HTMLElement>('[data-el]'))) {
     const el = slide.elements.find((e) => e.id === node.dataset.el);
-    if (!el || el.type === 'image' || el.type === 'video' || el.type === 'line') continue;
+    if (!el || el.type === 'image' || el.type === 'video' || el.type === 'line' || el.type === 'chart') continue;
     let textW = 0;
     let textH = 0;
     if (el.type === 'text') {
@@ -86,6 +86,12 @@ export function measureOverflow(host: HTMLElement, slide: Slide): OverflowItem[]
       const last = ps[ps.length - 1];
       textH = last.offsetTop + last.offsetHeight - first.offsetTop;
       textW = Math.max(...ps.map((p) => p.scrollWidth));
+    } else if (el.type === 'table') {
+      // A table grows taller than its box when a row has more text than its share of the height.
+      const grid = node.querySelector<HTMLElement>('table');
+      if (!grid) continue;
+      textW = grid.offsetWidth;
+      textH = grid.offsetHeight;
     } else {
       const label = node.querySelector<HTMLElement>(':scope > span');
       if (!label || !el.text) continue;

@@ -3,11 +3,13 @@
 // Download as PowerPoint) and in Node (tests); the caller loads images, since that differs between the two.
 import { youtubeId } from './video.ts';
 import type PptxGenJS from 'pptxgenjs';
-import { fillColor, ROLE_SIZE, THEMES, type ArrowStyle, type Deck, type SlideElement, type TextElement, type TextRun } from './deck.ts';
+import { fillColor, ROLE_SIZE, THEMES, type ArrowStyle, type ChartElement, type Deck, type SlideElement, type TextElement, type TextRun } from './deck.ts';
 
 /** PowerPoint's arrowhead types for ours (its "arrow" is the open one, "stealth" the barbed filled one). */
 const PPTX_ARROW: Record<Exclude<ArrowStyle, 'none'>, 'arrow' | 'diamond' | 'oval' | 'stealth' | 'triangle'> = { arrow: 'stealth', open: 'arrow', triangle: 'triangle', circle: 'oval', diamond: 'diamond' };
 import { arcGeometry, SHAPES } from './shapes.ts';
+import { cellLook, colShares, mixColor, TABLE_PAD, TABLE_SIZE, tableColors } from './deckTable.ts';
+import { CHART_COLORS } from './chart.ts';
 
 /** Returns a data URL for an image address, or null if it cannot be loaded. */
 export type ImageLoader = (src: string) => Promise<string | null>;
@@ -80,7 +82,53 @@ export const shapeName = (id: string): string => `ff-${id}`;
 /** An element id kept in a shape's name by shapeName. */
 export const SHAPE_ID_RE = /^ff-([\w.-]{1,80})$/;
 
-/** Build the presentation. Returns the pptxgenjs instance (write it with writeFile or write) and warnings. */
+/** The uri of the extension that keeps a linked table's spreadsheet range (TableElement.source) in the file. */
+export const TABLE_SOURCE_EXT = 'urn:universal-docs:table-source';
+/** The same for the spreadsheet chart a slide's chart shows (ChartElement.source). */
+export const CHART_SOURCE_EXT = 'urn:universal-docs:chart-source';
+
+/**
+ * The presentation as the bytes of a .pptx file, with warnings. What pptxgenjs cannot write about a table goes
+ * into its frame afterwards: the header-row and banded-rows flags (it always writes an empty a:tblPr), and the
+ * spreadsheet range of a linked table, as an extension PowerPoint passes over, so reading the file back keeps them.
+ */
+export async function writePptx(deck: Deck, title: string, loadImage: ImageLoader): Promise<{ data: Uint8Array; warnings: string[] }> {
+  const { pres, warnings } = await buildPptx(deck, title, loadImage);
+  const data = (await pres.write({ outputType: 'uint8array' })) as Uint8Array;
+  const extras = new Map<string, { flags: string; ext: string }>();
+  const chartLinks = new Map<string, string>();
+  for (const slide of deck.slides) {
+    for (const el of slide.elements) {
+      if (el.type === 'chart' && el.source) chartLinks.set(el.id, `<p:extLst><p:ext uri="${CHART_SOURCE_EXT}"><ud:chartSource xmlns:ud="urn:universal-docs" data="${encodeURIComponent(JSON.stringify(el.source))}"/></p:ext></p:extLst>`);
+      if (el.type !== 'table' || !(el.header || el.banded || el.source)) continue;
+      extras.set(el.id, {
+        flags: `${el.header ? ' firstRow="1"' : ''}${el.banded ? ' bandRow="1"' : ''}`,
+        // encodeURIComponent leaves only characters that need no escaping in an XML attribute.
+        ext: el.source ? `<p:ext uri="${TABLE_SOURCE_EXT}"><ud:tableSource xmlns:ud="urn:universal-docs" data="${encodeURIComponent(JSON.stringify(el.source))}"/></p:ext>` : '',
+      });
+    }
+  }
+  if (!extras.size && !chartLinks.size) return { data, warnings };
+  const { default: JSZip } = await import('jszip');
+  const zip = await JSZip.loadAsync(data);
+  // A table's frame is named for its element (shapeName); its a:tblPr follows before any other shape's cNvPr.
+  const frame = /(<p:cNvPr id="\d+" name="ff-([\w.-]{1,80})"\/>(?:(?!<p:cNvPr )[\s\S])*?)<a:tblPr\/>/g;
+  for (const name of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
+    const xml = await zip.file(name)!.async('string');
+    // A chart's frame: its name, then its (empty) non-visual properties, where the link goes.
+    const chartFrame = /(<p:cNvPr id="\d+" name="ff-([\w.-]{1,80})" descr="[^"]*"\/>\s*<p:cNvGraphicFramePr\/>\s*<p:nvPr>)(\s*)<\/p:nvPr>/g;
+    const next = xml.replace(chartFrame, (all, head: string, id: string) => (chartLinks.has(id) ? `${head}${chartLinks.get(id)}</p:nvPr>` : all)).replace(frame, (all, head: string, id: string) => {
+      const extra = extras.get(id);
+      if (!extra) return all;
+      const withExt = !extra.ext ? head : head.includes('</p:extLst></p:nvPr>') ? head.replace('</p:extLst></p:nvPr>', `${extra.ext}</p:extLst></p:nvPr>`) : head.replace('<p:nvPr/>', `<p:nvPr><p:extLst>${extra.ext}</p:extLst></p:nvPr>`);
+      return `${withExt}<a:tblPr${extra.flags}/>`;
+    });
+    if (next !== xml) zip.file(name, next);
+  }
+  return { data: await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }), warnings };
+}
+
+/** Build the presentation. Returns the pptxgenjs instance and warnings; writePptx makes the file. */
 export async function buildPptx(deck: Deck, title: string, loadImage: ImageLoader): Promise<{ pres: PptxGenJS; warnings: string[] }> {
   const { default: PptxGen } = await import('pptxgenjs');
   const pres = new PptxGen();
@@ -95,14 +143,58 @@ export async function buildPptx(deck: Deck, title: string, loadImage: ImageLoade
     const s = pres.addSlide();
     const bg = hexColor(fillColor(slide.bg)) ?? hexColor(theme.bg);
     if (bg) s.background = { color: bg };
-    for (const el of slide.elements) await addElement(s, el);
+    for (const el of slide.elements) await addElement(s, el, slide.bg);
     if (slide.notes) s.addNotes(slide.notes);
   }
   if (missingImages) warnings.push(`${missingImages} image${missingImages === 1 ? '' : 's'} could not be loaded and ${missingImages === 1 ? 'was' : 'were'} left as a placeholder.`);
   if (storedVideos) warnings.push(`${storedVideos} video${storedVideos === 1 ? ' is' : 's are'} not in the file: a video from your files stays in Universal Docs, and its place is marked on the slide.`);
   return { pres, warnings };
 
-  async function addElement(s: PptxGenJS.Slide, el: SlideElement): Promise<void> {
+  /**
+   * A chart as a PowerPoint chart (its data goes into the file with it, so it can be edited there), in the
+   * deck's colors. A chart with nothing to show is left out.
+   */
+  function addChart(s: PptxGenJS.Slide, el: ChartElement, box: { x: number; y: number; w: number; h: number; objectName: string }): void {
+    const { chart, data } = el;
+    if (!data.series.length) return;
+    const textColor = hexColor(theme.text) ?? '1F1F1F';
+    const muted = hexColor(theme.muted) ?? '5F6368';
+    const labels = data.categories;
+    const values = (p: { y: number | null }) => p.y as number;
+    const series =
+      chart.type === 'scatter'
+        ? [{ name: 'X', values: (data.series[0]?.points ?? []).map((p) => p.x ?? null) as number[] }, ...data.series.map((sr) => ({ name: sr.name, values: sr.points.map(values) }))]
+        : data.series.map((sr) => ({ name: sr.name, labels, values: sr.points.map(values) }));
+    const type = ({ column: 'bar', bar: 'bar', line: 'line', area: 'area', pie: 'pie', scatter: 'scatter' } as const)[chart.type] as PptxGenJS.CHART_NAME;
+    const legend = chart.legend ?? (data.series.length > 1 || chart.type === 'pie' ? 'right' : 'none');
+    const colors = chart.type === 'pie' ? labels.map((_, i) => (i === 0 ? data.series[0].color : CHART_COLORS[i % CHART_COLORS.length])) : data.series.map((sr) => sr.color);
+    s.addChart(type, series, {
+      ...box,
+      chartColors: colors.map((c) => hexColor(c) ?? '4285F4'),
+      showLegend: legend !== 'none',
+      ...(legend !== 'none' ? { legendPos: legend === 'bottom' ? 'b' : legend === 'top' ? 't' : 'r' } : {}),
+      legendColor: textColor,
+      legendFontFace: fontFace(theme.bodyFont),
+      ...(chart.title ? { showTitle: true, title: chart.title, titleColor: textColor, titleFontSize: 15, titleFontFace: fontFace(theme.bodyFont) } : { showTitle: false }),
+      ...(chart.type === 'column' || chart.type === 'bar' ? { barDir: chart.type === 'bar' ? 'bar' : 'col', barGrouping: chart.stacked ? 'stacked' : 'clustered', barGapWidthPct: 80 } : {}),
+      ...(chart.type === 'area' && chart.stacked ? { barGrouping: 'stacked' } : {}),
+      ...(chart.type === 'line' ? { lineDataSymbol: 'circle', lineDataSymbolSize: 5, lineSize: 2 } : {}),
+      ...(chart.type === 'scatter' ? { lineSize: 0, lineDataSymbol: 'circle', lineDataSymbolSize: 6 } : {}),
+      ...(chart.logScale && chart.type !== 'pie' ? { valAxisLogScaleBase: 10 } : {}),
+      ...(chart.xTitle && chart.type !== 'pie' ? { showCatAxisTitle: true, catAxisTitle: chart.xTitle, catAxisTitleColor: textColor } : {}),
+      ...(chart.yTitle && chart.type !== 'pie' ? { showValAxisTitle: true, valAxisTitle: chart.yTitle, valAxisTitleColor: textColor } : {}),
+      catAxisLabelColor: muted,
+      valAxisLabelColor: muted,
+      catAxisLabelFontFace: fontFace(theme.bodyFont),
+      valAxisLabelFontFace: fontFace(theme.bodyFont),
+      catAxisLabelFontSize: 9,
+      valAxisLabelFontSize: 9,
+      valGridLine: { color: hexColor(mixColor(theme.muted, theme.bg, 0.3)) ?? 'E0E0E0', size: 0.75 },
+      ...(chart.type === 'pie' ? { showPercent: true, dataLabelColor: 'FFFFFF' } : {}),
+    });
+  }
+
+  async function addElement(s: PptxGenJS.Slide, el: SlideElement, slideBg: string | undefined): Promise<void> {
     // The element's id is the shape's name, so reading the file back keeps it (server/pptxImport.ts).
     const box = { x: inch(el.x), y: inch(el.y), w: inch(el.w), h: inch(el.h), ...(el.rot ? { rotate: ((el.rot % 360) + 360) % 360 } : {}), objectName: shapeName(el.id) };
     if (el.type === 'text') {
@@ -151,6 +243,48 @@ export async function buildPptx(deck: Deck, title: string, loadImage: ImageLoade
         storedVideos++;
         s.addText('Video', { ...box, shape: pres.ShapeType.rect, line: { color: '9AA0A6', width: 1 }, fill: { color: '202124' }, align: 'center', valign: 'middle', fontSize: 14, color: 'FFFFFF' });
       }
+      return;
+    }
+    if (el.type === 'chart') {
+      addChart(s, el, box);
+      return;
+    }
+    if (el.type === 'table') {
+      // A PowerPoint table with each cell's look written out (it does not use PowerPoint's table styles), its
+      // rows sharing the box's height and its columns the box's width as on the slide.
+      const colors = tableColors(el, theme, slideBg);
+      const border: PptxGenJS.BorderProps = colors.border === 'none' || !hexColor(colors.border) ? { type: 'none' } : { type: 'solid', color: hexColor(colors.border), pt: 0.75 };
+      const rows: PptxGenJS.TableRow[] = el.rows.map((row, r) =>
+        row.map((cell, c) => {
+          const look = cellLook(el, r, c, colors);
+          const fill = hexColor(look.fill);
+          return {
+            text: cell.text,
+            options: {
+              bold: look.bold,
+              italic: look.italic,
+              ...(hexColor(look.color) ? { color: hexColor(look.color) } : {}),
+              align: look.align,
+              valign: 'middle',
+              ...(fill ? { fill: { color: fill, transparency: transparencyOf(look.fill) } } : {}),
+            },
+          };
+        }),
+      );
+      s.addTable(rows, {
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        colW: colShares(el).map((share) => inch(share * el.w)),
+        rowH: el.rows.map(() => inch(el.h / el.rows.length)),
+        fontSize: pt(el.style?.size ?? TABLE_SIZE),
+        fontFace: el.style?.font ?? fontFace(theme.bodyFont),
+        border,
+        // Points are 1/72 inch; pptxgenjs takes table cell margins in points.
+        margin: [pt(TABLE_PAD.y), pt(TABLE_PAD.x), pt(TABLE_PAD.y), pt(TABLE_PAD.x)],
+        objectName: box.objectName,
+      });
       return;
     }
     const accent = hexColor(theme.accent) ?? '1A73E8';

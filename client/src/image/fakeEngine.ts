@@ -50,6 +50,11 @@ export function fakeEngine(width: number, height: number, opts: { backgroundRemo
       log.push(g.box ? `${kind} in ${g.box.x},${g.box.y} ${g.box.width}x${g.box.height} ${style.color}` : `${kind} from ${g.from!.x},${g.from!.y} to ${g.to!.x},${g.to!.y} ${style.color}`);
       return `o${layers}`;
     },
+    addImageAt: async (_src, at, o) => {
+      layers++;
+      log.push(`image at ${at.x},${at.y} ${at.width}x${at.height}${o?.opacity !== undefined && o.opacity < 1 ? ` opacity ${o.opacity}` : ''}`);
+      return `o${layers}`;
+    },
     redactRect: async (r, mode) => {
       if (!inside(r)) return false;
       layers++;

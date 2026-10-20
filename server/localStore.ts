@@ -709,6 +709,13 @@ export class LocalFileStore extends FileStore {
     return { ...f.meta, filename };
   }
 
+  /** A PDF signed over (the PDF signer) has no earlier version kept beside it, so a copy goes in the trash first. */
+  override async update(ownerId: string, id: string, data: Buffer): Promise<StoredFile | null> {
+    const f = this.get(ownerId, id);
+    if (f?.meta.type === 'application/pdf') await this.folder.keepCopy(joinFolder(f.meta.folder ?? '', f.meta.filename));
+    return super.update(ownerId, id, data);
+  }
+
   override async delete(ownerId: string, id: string): Promise<boolean> {
     const f = this.get(ownerId, id);
     if (!f) return false;

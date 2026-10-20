@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { EDITABLE_IMAGE_TYPES, HTML_TYPE, PREVIEW_FILE_TYPES, type StoredFile } from '../../../shared/types.ts';
 import { HtmlEditor } from '../components/HtmlEditor.tsx';
 import { HtmlPreview } from '../components/HtmlPreview.tsx';
@@ -7,6 +7,8 @@ import { TextFileEditor } from '../components/TextFileEditor.tsx';
 import { ZipBrowser } from '../components/ZipBrowser.tsx';
 import { isZipName } from '../../../shared/zip.ts';
 import { ImageFileEditor } from '../image/ImageFileEditor.tsx';
+import { PdfSigner } from '../pdf/PdfSigner.tsx';
+import { useAuth } from '../auth.tsx';
 import { ImageSelector } from '../components/ImageSelector.tsx';
 import type { ImageRegion } from '../../../shared/agent/protocol.ts';
 import { AgentButton } from '../agent/AgentPanel.tsx';
@@ -38,6 +40,11 @@ export function FilePage() {
   const [error, setError] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
   const navigate = useNavigate();
+  // `?edit=1` (the assistant putting a picture on top of this one) opens the editor at once.
+  const [params, setParams] = useSearchParams();
+  const editOnOpen = params.get('edit') === '1';
+  // The desktop app keeps no earlier version of a file in its folder (a signed PDF's is put in the trash).
+  const local = !!useAuth().local;
 
   // An Excel, PowerPoint or Word file is not edited in place: converting makes an editable copy next to it.
   const convert = async (stored: StoredFile) => {
@@ -96,6 +103,11 @@ export function FilePage() {
     api.getFile(id).then((r) => setFile(r.file), (e: Error) => setError(e.message));
   }, [id]);
   useEffect(() => {
+    if (!editOnOpen || file?.id !== id) return;
+    if (EDITABLE_IMAGE_TYPES.includes(file.type) || file.type === 'application/pdf') setEditing(true);
+    setParams({}, { replace: true });
+  }, [editOnOpen, file, id, setParams]);
+  useEffect(() => {
     const changed = (e: Event) => {
       if ((e as CustomEvent<string>).detail !== id) return;
       setVersion((v) => v + 1);
@@ -149,7 +161,17 @@ export function FilePage() {
               Edit
             </button>
           )}
-          {file?.type === 'application/pdf' && (
+          {file?.type === 'application/pdf' && !editing && canRevert && (
+            <button className="btn" onClick={() => void revert()} title="Put back the PDF as it was before it was signed">
+              Undo save
+            </button>
+          )}
+          {file?.type === 'application/pdf' && !editing && (
+            <button className="btn" onClick={() => setEditing(true)} title="Put your signature, your name, a date or other text on the PDF">
+              Edit
+            </button>
+          )}
+          {file?.type === 'application/pdf' && !editing && (
             <button className="btn" disabled={converting} onClick={() => void toMarkdown(file)} title="Make a Markdown file of the PDF's text next to it; the PDF stays as it is">
               {converting ? 'Converting…' : 'Convert to Markdown'}
             </button>
@@ -169,8 +191,29 @@ export function FilePage() {
           <div className="muted">Loading…</div>
         ) : isZipName(file.filename) ? (
           <ZipBrowser file={file} />
+        ) : file.type === 'application/pdf' && editing ? (
+          <PdfSigner
+            key={`${file.id}:${version}`}
+            file={file}
+            store={{
+              load: async () => {
+                const res = await fetch(file.url, { credentials: 'same-origin', cache: 'no-cache' });
+                if (!res.ok) throw new Error(`Could not read the PDF (${res.status})`);
+                return res.arrayBuffer();
+              },
+              replace: async (pdf) => {
+                setFile(await api.updatePdfFile(file.id, pdf));
+                setVersion((v) => v + 1);
+                setCanRevert(!local);
+                setEditing(false);
+              },
+              create: async (name, pdf) => navigate(`/f/${(await api.uploadFile(name, new File([pdf], name, { type: 'application/pdf' }), file.folder)).id}`),
+            }}
+            onClose={() => setEditing(false)}
+          />
         ) : file.type === 'application/pdf' ? (
-          <iframe className="file-preview" src={file.url} title={file.filename} />
+          // A PDF that was saved over is asked for by a new address, so the browser's viewer shows the new one.
+          <iframe key={version} className="file-preview" src={version ? `${file.url}?v=${version}` : file.url} title={file.filename} />
         ) : file.type === HTML_TYPE && editing ? (
           <HtmlEditor key={version} file={file} onSelect={setSelected} onSaved={setFile} />
         ) : file.type === HTML_TYPE ? (

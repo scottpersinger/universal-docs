@@ -1,5 +1,6 @@
 // Convert an uploaded .xlsx file into the native workbook format.
 import { randomUUID } from 'node:crypto';
+import { readXlsxCharts } from './xlsxCharts.ts';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -54,9 +55,32 @@ async function checkArchive(buf: Buffer): Promise<JSZip> {
   return zip;
 }
 
+/**
+ * The file for ExcelJS without the sheets' drawings (charts and pictures), which the import reads itself
+ * (server/xlsxCharts.ts) or leaves out: ExcelJS fails on some it cannot place (a drawing named by an absolute
+ * path, as openpyxl writes them), and then on the whole workbook.
+ */
+async function withoutDrawings(zip: JSZip, buf: Buffer): Promise<Buffer> {
+  const sheets = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/.test(n));
+  const copy = await JSZip.loadAsync(buf);
+  let changed = false;
+  for (const n of sheets) {
+    const xml = await zip.file(n)!.async('string');
+    const next = xml.replace(/<drawing\b[^>]*\/>/g, '');
+    if (next === xml) continue;
+    copy.file(n, next);
+    changed = true;
+  }
+  // ExcelJS reads every drawing part there is, whether a sheet shows it or not (but not the VML ones notes are drawn with).
+  for (const n of Object.keys(zip.files).filter((f) => /^xl\/drawings\/(_rels\/)?drawing\d*\.xml(\.rels)?$/.test(f))) {
+    copy.remove(n);
+    changed = true;
+  }
+  return changed ? copy.generateAsync({ type: 'nodebuffer' }) : buf;
+}
+
 /** Parts of a workbook the import leaves out, by the files that hold them. */
 const LOST_PARTS: [RegExp, string][] = [
-  [/^xl\/charts\/chart\d*\.xml$/, 'Charts'],
   [/^xl\/media\//, 'Pictures'],
   [/^xl\/(comments\d*\.xml|threadedComments\/)/, 'Comments'],
   [/^xl\/pivotTables\//, 'Pivot tables'],
@@ -221,7 +245,7 @@ export async function importXlsx(buf: Buffer): Promise<ImportResult> {
   const zip = await checkArchive(buf);
   const wb = new ExcelJS.Workbook();
   try {
-    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    await wb.xlsx.load((await withoutDrawings(zip, buf)) as unknown as ArrayBuffer);
   } catch {
     throw new ImportError('This file could not be read as an .xlsx workbook.');
   }
@@ -392,7 +416,11 @@ export async function importXlsx(buf: Buffer): Promise<ImportResult> {
   if (hidden.length) warnings.push(`Hidden sheets are shown as normal tabs: ${hidden.join(', ')}.`);
   if (renamed.length) warnings.push(`Some sheet names were changed: ${renamed.join(', ')}.`);
 
+  // Charts ExcelJS does not read: those ours can be are put on their tabs, the others are lost on saving.
+  const droppedCharts = await readXlsxCharts(zip, tabs, new Map(renames));
+  if (droppedCharts) warnings.push(`${droppedCharts} chart${droppedCharts === 1 ? ' is' : 's are'} of a kind this app cannot show (such as combination, radar or stock charts) and ${droppedCharts === 1 ? 'was' : 'were'} left out.`);
   const lost = await lostParts(zip);
+  if (droppedCharts) lost.unshift('Charts');
   if (merged) lost.push('Merged cells');
   if (hidden.length) lost.push('Hidden sheets');
   return { workbook: { version: 1, tabs }, warnings, lost };

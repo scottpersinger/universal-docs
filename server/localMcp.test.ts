@@ -185,6 +185,21 @@ describe("the desktop app's MCP server", () => {
       expect(r.isError).not.toBe(true);
       expect(JSON.parse(text(r))).toMatchObject({ edited: true, file_id: 'copy1', image: 'The picture comes with this result. Look at it before reporting back.' });
       expect(r.content).toContainEqual({ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' });
+
+      // A picture put on top, with no save asked for, goes to the window with none, which opens the image editor
+      // so the user can still move it; asked for a file, it is a copy as other edits are.
+      buffer = '';
+      const layered = client.callTool({ name: 'transform_image', arguments: { file_id: logo.id, overlays: [{ file_id: logo.id, x: 0, y: 0, width: 1, opacity: 50 }] } });
+      let overlay: { id: string; input: Record<string, unknown> } | null = null;
+      while (!overlay) {
+        const { value } = await reader.read();
+        buffer += new TextDecoder().decode(value);
+        const event = /^data: (.*)$/m.exec(buffer);
+        if (event) overlay = JSON.parse(event[1]);
+      }
+      expect(overlay.input).toEqual({ file_id: logo.id, operations: [{ op: 'overlay', source: logo.id, x: 0, y: 0, width: 1, opacity: 50 }] });
+      await app.inject({ method: 'POST', url: `/api/local/tool-calls/${overlay.id}`, payload: { content: JSON.stringify({ edited: true, file_id: logo.id, saved: false }) } });
+      expect(JSON.parse(text(await layered))).toMatchObject({ edited: true, saved: false });
     } finally {
       stop.abort();
       await client.close();

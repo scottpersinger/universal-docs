@@ -27,6 +27,7 @@ import { openaiErrorMessage } from './agent/openai.ts';
 import { OpenRouterError } from './agent/openrouter.ts';
 import { checkAssistantKey, OwnKeyError } from './agent/providers.ts';
 import { AssistantSettingsStore, SettingsError, type KeyCheck } from './agent/settings.ts';
+import { isSignatureImage, MAX_SIGNATURES, SignatureStore } from './signatures.ts';
 import { AgentStore } from './agent/store.ts';
 import { registerConnectorService } from './agent/tools.ts';
 import { ConnectorService, type ConnectorServiceOptions } from './connectors/service.ts';
@@ -50,6 +51,7 @@ import { mountPlugin } from '../plugin/server/mount.ts';
 import { mailerFromEnv, type Mailer } from './mail.ts';
 import { RevisionFeed } from './revisionFeed.ts';
 import { SheetStore, validateWorkbook } from './sheets.ts';
+import { listSheetCharts, loadLinkedChart, loadLinkedTable } from './linkedTable.ts';
 import { importPptx } from './pptxImport.ts';
 import { ImportError, importExcel } from './xlsxImport.ts';
 import { WindowTools, type WindowToolAnswer, type WindowToolCall } from './windowTools.ts';
@@ -244,6 +246,7 @@ export async function buildApp(opts: AppOptions) {
           ...opts.local.claudeAgent,
         })
       : undefined;
+  const signatures = new SignatureStore(settingsDb);
   const assistantSettings = new AssistantSettingsStore(settingsDb, path.join(settingsDir, 'connector.key'), { builtIn: !opts.local, agents: !!claudeAgent });
   const agent = new AgentService(new AgentStore(db), sheets, assistantSettings, { jobs: !opts.local, ...opts.agent, images, files: storedFiles, claudeAgent });
   const jobs = new JobStore(db);
@@ -584,6 +587,46 @@ export async function buildApp(opts: AppOptions) {
         return { sheet: res.meta, workbook: res.workbook, ...(res.notKept ? { notKept: res.notKept } : {}) };
       } catch (e) {
         // A CSV or Excel file from a mounted folder that cannot be opened (too large, or not what it says).
+        if (e instanceof CsvError || e instanceof ImportError) return reply.code(400).send({ error: e.message });
+        throw e;
+      }
+    });
+
+    // A range of the spreadsheet as the cells of a slide table (a table linked to it, shared/sheetTable.ts).
+    r.get('/api/sheets/:id/table', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const q = req.query as { tabId?: string; tab?: string; range?: string };
+      try {
+        const t = await loadLinkedTable(sheets, req.user!.id, id, { tabId: q.tabId || undefined, tab: q.tab || undefined, range: q.range || undefined });
+        if (!t) return reply.code(404).send({ error: 'Sheet not found' });
+        if (typeof t === 'string') return reply.code(400).send({ error: t });
+        return t;
+      } catch (e) {
+        if (e instanceof CsvError || e instanceof ImportError) return reply.code(400).send({ error: e.message });
+        throw e;
+      }
+    });
+
+    // The spreadsheet's charts, for a slide: the list to choose from, and one as a slide shows it (shared/chart.ts).
+    r.get('/api/sheets/:id/charts', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      try {
+        const list = await listSheetCharts(sheets, req.user!.id, id);
+        return list ?? reply.code(404).send({ error: 'Sheet not found' });
+      } catch (e) {
+        if (e instanceof CsvError || e instanceof ImportError) return reply.code(400).send({ error: e.message });
+        throw e;
+      }
+    });
+    r.get('/api/sheets/:id/chart', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const chartId = (req.query as { chart?: string }).chart ?? '';
+      try {
+        const c = await loadLinkedChart(sheets, req.user!.id, id, chartId);
+        if (!c) return reply.code(404).send({ error: 'Sheet not found' });
+        if (typeof c === 'string') return reply.code(404).send({ error: c });
+        return c;
+      } catch (e) {
         if (e instanceof CsvError || e instanceof ImportError) return reply.code(400).send({ error: e.message });
         throw e;
       }
@@ -1136,11 +1179,16 @@ export async function buildApp(opts: AppOptions) {
       }
     });
 
-    // Rewrite a text file (the assistant's edit_file) or a picture (the image editor), keeping the version
-    // before for one revert. PDFs, videos and animated pictures are never rewritten.
+    // Rewrite a text file (the assistant's edit_file), a picture (the image editor) or a PDF (signed in the PDF
+    // signer), keeping the version before for one revert. Videos and animated pictures are never rewritten.
     r.put('/api/files/:id', async (req, reply) => {
       const f = storedFile(req);
       if (!f) return reply.code(404).send({ error: 'File not found' });
+      if (f.meta.type === 'application/pdf') {
+        const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+        if (type !== 'application/pdf' || !Buffer.isBuffer(req.body) || !req.body.subarray(0, 1024).includes('%PDF-')) return reply.code(400).send({ error: 'Send the PDF as the request body, as application/pdf.' });
+        return { file: await storedFiles.update(req.user!.id, f.meta.id, req.body) };
+      }
       if (EDITABLE_IMAGE_TYPES.includes(f.meta.type)) {
         // A picture stays the type it is: its name and everything that shows it depend on that.
         const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
@@ -1610,6 +1658,21 @@ export async function buildApp(opts: AppOptions) {
         if (e instanceof SettingsError) return reply.code(400).send({ error: e.message });
         throw e;
       }
+    });
+
+    // --- The user's saved signatures, for signing PDFs (server/signatures.ts) ---
+    r.get('/api/settings/signatures', async (req) => ({ signatures: signatures.list(req.user!.id) }));
+
+    r.post('/api/settings/signatures', async (req, reply) => {
+      const image = (req.body as { image?: unknown } | null)?.image;
+      if (!isSignatureImage(image)) return reply.code(400).send({ error: 'Send the signature as a PNG picture (a data: address of at most 2 MB).' });
+      const signature = signatures.add(req.user!.id, image);
+      return signature ? { signature } : reply.code(400).send({ error: `You can keep up to ${MAX_SIGNATURES} signatures. Remove one to save another.` });
+    });
+
+    r.delete('/api/settings/signatures/:id', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return signatures.delete(req.user!.id, id) ? { ok: true } : reply.code(404).send({ error: 'No such signature.' });
     });
 
     // --- Agents signed in to the plugin's MCP endpoint with a device code (none when the plugin is not mounted) ---

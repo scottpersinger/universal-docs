@@ -180,6 +180,7 @@ const TAB_PROP_PROBLEMS: Partial<Record<keyof Tab, string>> = {
   frozenRows: 'Frozen rows and columns',
   frozenCols: 'Frozen rows and columns',
   filter: 'Filters',
+  charts: 'Charts',
 };
 
 const isEmpty = (v: unknown) => v === undefined || v === null || v === 0 || (typeof v === 'object' && Object.keys(v as object).length === 0);
@@ -199,7 +200,7 @@ export function csvTabPropProblem(prop: keyof Tab, value: unknown): string | nul
 export function csvProblem(wb: Workbook): string | null {
   if (wb.tabs.length !== 1) return 'More than one sheet';
   const tab = wb.tabs[0];
-  for (const prop of ['colWidths', 'rowHeights', 'frozenRows', 'frozenCols', 'filter'] as const) {
+  for (const prop of ['colWidths', 'rowHeights', 'frozenRows', 'frozenCols', 'filter', 'charts'] as const) {
     const problem = csvTabPropProblem(prop, tab[prop]);
     if (problem) return problem;
   }

@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { contextMenuTemplate } from './contextMenu.js';
 import { LocalOAuth } from './mcpAuth.js';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -360,6 +361,19 @@ app.on('web-contents-created', (_e, contents) => {
     if (serverAt(target)) return { action: 'allow', overrideBrowserWindowOptions: WINDOW_OPTIONS };
     void shell.openExternal(target);
     return { action: 'deny' };
+  });
+  // The right-click menu a browser would show (desktop/contextMenu.js).
+  contents.on('context-menu', (_e, params) => {
+    const template = contextMenuTemplate(params, {
+      copyImage: () => contents.copyImageAt(params.x, params.y),
+      copyText: (text) => clipboard.writeText(text),
+      saveImage: (url) => contents.downloadURL(url),
+      openLink: (url) => void shell.openExternal(url),
+      replaceMisspelling: (word) => contents.replaceMisspelling(word),
+      learnSpelling: (word) => contents.session.addWordToSpellCheckerDictionary(word),
+      inspect: app.isPackaged ? undefined : () => contents.inspectElement(params.x, params.y),
+    });
+    if (template.length) Menu.buildFromTemplate(template).popup({ window: BrowserWindow.fromWebContents(contents) ?? undefined });
   });
   contents.on('did-create-window', (child, { url }) => {
     const opener = BrowserWindow.fromWebContents(contents);

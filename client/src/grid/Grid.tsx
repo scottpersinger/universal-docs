@@ -49,6 +49,7 @@ import {
 import type { CellDiff } from '../../../shared/diff.ts';
 import { hasContent } from '../../../shared/types.ts';
 import { clipboardImage, uploadImageFile } from '../cellImage.ts';
+import { ChartLayer } from '../chart/ChartLayer.tsx';
 
 type Hit =
   | { area: 'corner' }
@@ -1000,6 +1001,7 @@ export function Grid({ ctl, notify }: { ctl: SheetController; notify?: (msg: str
           </div>
         </div>
       </div>
+      <ChartLayer ctl={ctl} layout={layout} vp={vp} scroller={scrollerRef} />
       {freezeGuide && (
         <div
           className="freeze-guide"

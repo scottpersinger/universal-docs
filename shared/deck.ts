@@ -2,7 +2,7 @@
 //
 // A slide is a fixed 960×540 point canvas (PowerPoint's default 16:9 size, so an export maps 1:1) with
 // absolutely positioned elements. Elements are text boxes (paragraphs with per-paragraph bullets), images
-// (same storage as cell images) and simple shapes. Slides are usually built from a layout: a handful of
+// (same storage as cell images), videos, shapes, lines and tables. Slides are usually built from a layout: a handful of
 // named arrangements (title, title + body, two columns, ...) that turn plain content into positioned
 // elements, so both the UI and the assistant can make slides without choosing coordinates.
 import { safeLinkUrl } from './links.ts';
@@ -10,6 +10,8 @@ import { SHAPE_KINDS, tightArc, type ShapeKind } from './shapes.ts';
 import { checkCellImage } from './types.ts';
 import { checkVideo } from './video.ts';
 import { lineEnds } from './lines.ts';
+import { tableOutline } from './deckTable.ts';
+import { validateChartElement, chartElementOutline, type ChartData, type SlideChart } from './chart.ts';
 
 export type { ShapeKind };
 
@@ -193,7 +195,93 @@ export interface LineElement extends ElementBase {
   bend?: number;
 }
 
-export type SlideElement = TextElement | ImageElement | VideoElement | ShapeElement | LineElement;
+/** A table cell: its text (lines separated by "\n") and how it differs from the table's own look. */
+export interface TableCell {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  /** CSS color of the text. */
+  color?: string;
+  /** Background CSS color. */
+  fill?: string;
+  align?: 'left' | 'center' | 'right';
+}
+
+export interface TableStyle {
+  /** Font size in points. Defaults to 16. */
+  size?: number;
+  /** Font family name (e.g. "Inter"); the theme body font is the fallback. */
+  font?: string;
+  /** CSS color of the text; defaults to the theme text color. */
+  color?: string;
+  /** CSS color of the cell borders, or "none"; defaults to a tint of the theme's muted color. */
+  border?: string;
+  /** Background of the header row; defaults to the theme accent. */
+  headerFill?: string;
+}
+
+/** The spreadsheet range a linked table shows (shared/sheetTable.ts reads it). */
+export interface TableSource {
+  /** The spreadsheet's id, and its title when the table was last refreshed (for showing). */
+  sheet: string;
+  title?: string;
+  /** The tab, by id (which survives renaming) and by name (when the id is no longer found). */
+  tabId: string;
+  tab: string;
+  /** The range in A1 notation, e.g. "A1:D8": the one read last when `used` is set. */
+  range: string;
+  /** Follow the used part of the tab (it grows and shrinks with the data) rather than a fixed range. */
+  used?: boolean;
+  /** The spreadsheet's revision the cells were read from. */
+  rev?: string;
+}
+
+/**
+ * A table of text cells (shared/deckTable.ts has its operations and colors). The rows share the box's height
+ * evenly (a row with more text than fits grows, as in PowerPoint) and the columns its width by `cols`.
+ */
+export interface TableElement extends ElementBase {
+  type: 'table';
+  /** Rows of cells, every row as long as the first. */
+  rows: TableCell[][];
+  /** Column widths as shares of the box width, adding up to 1. Absent: equal columns. */
+  cols?: number[];
+  /** The first row is a header: bold, on the header fill. */
+  header?: boolean;
+  /** Every other row below the header is shaded. */
+  banded?: boolean;
+  style?: TableStyle;
+  /**
+   * Linked to a spreadsheet range: the cells are the range's values and look as last read, refreshed while the
+   * presentation is open, and are not edited on the slide.
+   */
+  source?: TableSource;
+}
+
+/** The spreadsheet chart a slide chart shows (shared/chart.ts): the spreadsheet, its tab and the chart's id. */
+export interface ChartSource {
+  sheet: string;
+  title?: string;
+  tabId: string;
+  tab: string;
+  chart: string;
+  /** The spreadsheet's revision the chart was read from. */
+  rev?: string;
+}
+
+/**
+ * A chart on a slide: how it looks (a spreadsheet chart's type, titles, legend and axes, without its place)
+ * and the data it shows, as read last. Linked to a spreadsheet's chart, it is read again as the spreadsheet
+ * changes (client/src/deck/linkedTables.ts); without a source (from a PowerPoint file, say) it keeps its data.
+ */
+export interface ChartElement extends ElementBase {
+  type: 'chart';
+  chart: SlideChart;
+  data: ChartData;
+  source?: ChartSource;
+}
+
+export type SlideElement = TextElement | ImageElement | VideoElement | ShapeElement | LineElement | TableElement | ChartElement;
 
 export interface Slide {
   id: string;
@@ -540,6 +628,8 @@ const MAX_ELEMENTS = 200;
 const MAX_PARAGRAPHS = 500;
 const MAX_TEXT = 20_000;
 const MAX_RUNS = 200;
+export const MAX_TABLE_ROWS = 100;
+export const MAX_TABLE_COLS = 30;
 const COORD = 20_000;
 
 const isColor = (v: unknown) => typeof v === 'string' && v.length <= 64;
@@ -635,6 +725,42 @@ export function validateElement(e: unknown, where: string): string | null {
       }
       return null;
     }
+    case 'table': {
+      if (!Array.isArray(el.rows) || !el.rows.length || el.rows.length > MAX_TABLE_ROWS) return `${where}: a table needs 1 to ${MAX_TABLE_ROWS} rows`;
+      const n = Array.isArray(el.rows[0]) ? el.rows[0].length : 0;
+      if (n < 1 || n > MAX_TABLE_COLS) return `${where}: a table needs 1 to ${MAX_TABLE_COLS} columns`;
+      let chars = 0;
+      for (const row of el.rows) {
+        if (!Array.isArray(row) || row.length !== n) return `${where}: every row of a table needs ${n} cells`;
+        for (const c of row) {
+          if (!c || typeof c.text !== 'string') return `${where}: invalid table cell`;
+          if (c.color !== undefined && !isColor(c.color)) return `${where}: invalid cell color`;
+          if (c.fill !== undefined && !isColor(c.fill)) return `${where}: invalid cell fill`;
+          if (c.align !== undefined && !['left', 'center', 'right'].includes(c.align)) return `${where}: invalid cell align`;
+          chars += c.text.length;
+        }
+      }
+      if (chars > MAX_TEXT) return `${where}: too much text in one table`;
+      const src = el.source;
+      if (src !== undefined) {
+        const str = (v: unknown, max: number) => typeof v === 'string' && v.length > 0 && v.length <= max;
+        if (!src || typeof src !== 'object' || !str(src.sheet, 200) || !str(src.tabId, 200) || !str(src.tab, 200) || !str(src.range, 40)) return `${where}: invalid table source`;
+        if ((src.title !== undefined && typeof src.title !== 'string') || (src.rev !== undefined && typeof src.rev !== 'string') || (src.used !== undefined && typeof src.used !== 'boolean')) return `${where}: invalid table source`;
+      }
+      if (el.cols !== undefined && !(Array.isArray(el.cols) && el.cols.length === n && el.cols.every((w) => num(w, 0.001, 1)))) return `${where}: invalid column widths`;
+      const s = el.style;
+      if (s !== undefined) {
+        if (!s || typeof s !== 'object') return `${where}: invalid table style`;
+        if (s.size !== undefined && !num(s.size, 4, 400)) return `${where}: invalid font size`;
+        if (s.font !== undefined && (typeof s.font !== 'string' || s.font.length > 64)) return `${where}: invalid font`;
+        for (const k of ['color', 'border', 'headerFill'] as const) if (s[k] !== undefined && !isColor(s[k])) return `${where}: invalid table ${k}`;
+      }
+      return null;
+    }
+    case 'chart': {
+      const problem = validateChartElement(el);
+      return problem ? `${where}: ${problem}` : null;
+    }
     case 'shape': {
       if (!SHAPE_KINDS.includes(el.shape)) return `${where}: invalid shape`;
       if (el.fill !== undefined && !isPaint(el.fill)) return `${where}: invalid fill`;
@@ -711,6 +837,8 @@ export function deckOutline(deck: Deck, current?: number) {
         if (e.type === 'text') return { ...box, type: 'text', ...(e.role ? { role: e.role } : {}), text: fromParagraphs(e.paragraphs).join('\n'), ...(e.style ? { style: e.style } : {}) };
         if (e.type === 'image') return { ...box, type: 'image', src: e.src.length > 80 ? `${e.src.slice(0, 77)}...` : e.src };
         if (e.type === 'video') return { ...box, type: 'video', src: e.src };
+        if (e.type === 'table') return { ...box, ...tableOutline(e) };
+        if (e.type === 'chart') return { ...box, ...chartElementOutline(e) };
         if (e.type === 'line') {
           const { x1, y1, x2, y2 } = lineEnds(e);
           const conn = (c: LineConnection | undefined) => (c ? { element_id: c.elementId, site: c.site } : undefined);

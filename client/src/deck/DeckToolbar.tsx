@@ -1,8 +1,10 @@
 // Toolbar for the deck editor: slides, layout, theme, inserting elements, text styling and arrangement.
 import { useEffect, useState, type ReactNode } from 'react';
-import { buildSlide, LAYOUT_IDS, SLIDE_H, SLIDE_W, THEME_IDS, THEMES, type ArrowStyle, type LayoutId, type LineElement, type LineKind, type TextElement, type ThemeId } from '../../../shared/deck.ts';
+import { buildSlide, type ChartElement, LAYOUT_IDS, SLIDE_H, SLIDE_W, THEME_IDS, THEMES, type ArrowStyle, type LayoutId, type LineElement, type LineKind, type TextElement, type ThemeId } from '../../../shared/deck.ts';
 import { ARROW_STYLES, DASH_STYLES, DEFAULT_LINE_WIDTH } from '../../../shared/lines.ts';
 import { SHAPE_KINDS, SHAPES } from '../../../shared/shapes.ts';
+import { sourceLabel, TABLE_SIZE } from '../../../shared/deckTable.ts';
+import type { LinkedTableSync } from './linkedTables.ts';
 import { MOD } from '../commands.ts';
 import { ColorPicker } from '../components/ColorPicker.tsx';
 import { MenuList, type MenuItem } from '../components/Menu.tsx';
@@ -63,6 +65,100 @@ function ShapePicker({ ctl }: { ctl: DeckController }) {
               <ShapeIcon kind={s} size={24} />
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Table sizes offered in the Insert menu, as rows × columns. */
+export const TABLE_SIZES: [number, number][] = [
+  [2, 2],
+  [3, 3],
+  [4, 3],
+  [5, 4],
+  [6, 5],
+];
+
+/** Insert menu items for a table of each size. */
+export function tableMenuItems(ctl: DeckController): MenuItem[] {
+  return TABLE_SIZES.map(([r, c]) => ({ label: `${r} rows × ${c} columns`, action: () => ctl.addTable(r, c) }));
+}
+
+const PICK_ROWS = 8;
+const PICK_COLS = 10;
+
+const tableIcon = (
+  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    <path d="M3 9.5h18M3 15h18M9 4v16M15 4v16" fill="none" stroke="currentColor" strokeWidth="1.4" />
+  </svg>
+);
+
+/** The Table button: a grid to pick the new table's size by pointing at its last cell. */
+function TablePicker({ ctl, onFromSheet }: { ctl: DeckController; onFromSheet?(): void }) {
+  const [open, setOpen] = useState(false);
+  const [size, setSize] = useState<[number, number]>([0, 0]);
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', key);
+    };
+  }, [open]);
+  return (
+    <div className="tb-drop" onMouseDown={(e) => e.stopPropagation()}>
+      <Btn
+        title="Table"
+        active={open}
+        onClick={() => {
+          setSize([0, 0]);
+          setOpen(!open);
+        }}
+      >
+        {tableIcon} <span className="tb-caret">▾</span>
+      </Btn>
+      {open && (
+        <div className="table-picker" role="menu" aria-label="Table size" onMouseLeave={() => setSize([0, 0])}>
+          <div className="table-picker-grid" style={{ gridTemplateColumns: `repeat(${PICK_COLS}, 1fr)` }}>
+            {Array.from({ length: PICK_ROWS * PICK_COLS }, (_, k) => {
+              const r = Math.floor(k / PICK_COLS) + 1;
+              const c = (k % PICK_COLS) + 1;
+              return (
+                <button
+                  key={k}
+                  role="menuitem"
+                  aria-label={`${r} by ${c} table`}
+                  className={r <= size[0] && c <= size[1] ? 'on' : undefined}
+                  onMouseEnter={() => setSize([r, c])}
+                  onFocus={() => setSize([r, c])}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    ctl.addTable(r, c);
+                    setOpen(false);
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div className="table-picker-label">{size[0] ? `${size[0]} × ${size[1]}` : 'Insert table'}</div>
+          {onFromSheet && (
+            <button
+              className="table-picker-sheet"
+              role="menuitem"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setOpen(false);
+                onFromSheet();
+              }}
+            >
+              From a spreadsheet…
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -223,12 +319,134 @@ function Drop({ title, label, items, disabled }: { title: string; label: ReactNo
   );
 }
 
-export function DeckToolbar({ ctl, onPresent, onInsertImage, onInsertVideo, onEditImage }: { ctl: DeckController; onPresent(): void; onInsertImage(): void; /** Open the video dialog; without it the button is not shown. */ onInsertVideo?(): void; /** Open the image editor on a picture element; without it the button is not shown. */ onEditImage?(id: string): void }) {
+/** The controls of the selected table: rows and columns, the header and banding, and the current cell's look (every cell's when there is no current cell). */
+function TableControls({ ctl, linked, onOpenSheet }: { ctl: DeckController; linked?: LinkedTableSync | null; onOpenSheet?(id: string): void }) {
+  const table = ctl.table!;
+  // A linked table's rows, columns and cells are its spreadsheet range's: only its own look is changed here.
+  const src = table.source;
+  const problem = linked?.problems.get(table.id);
+  const at = ctl.tableCell?.id === table.id ? ctl.tableCell : null;
+  const cell = at ? table.rows[at.r]?.[at.c] : table.rows[0][0];
+  const headerCell = !!table.header && (at ? at.r === 0 : false);
+  const bold = cell?.bold ?? headerCell;
+  const italic = !!cell?.italic;
+  const align = cell?.align ?? 'left';
+  const size = table.style?.size ?? TABLE_SIZE;
+  const scope = at ? 'the cell' : 'every cell';
+  const items: MenuItem[] = [
+    ...(src
+      ? []
+      : ([
+          { label: 'Insert row above', action: () => ctl.insertTableRow('above') },
+          { label: 'Insert row below', action: () => ctl.insertTableRow('below') },
+          { label: 'Insert column left', action: () => ctl.insertTableColumn('left') },
+          { label: 'Insert column right', action: () => ctl.insertTableColumn('right') },
+          'sep',
+          { label: 'Delete row', action: () => ctl.deleteTableRow() },
+          { label: 'Delete column', action: () => ctl.deleteTableColumn() },
+          'sep',
+        ] as MenuItem[])),
+    { label: 'Header row', checked: !!table.header, action: () => ctl.setTableOptions({ header: !table.header }) },
+    { label: 'Banded rows', checked: !!table.banded, action: () => ctl.setTableOptions({ banded: !table.banded }) },
+    { label: 'Equal column widths', disabled: !table.cols, action: () => ctl.setTableOptions({ cols: undefined }) },
+  ];
+  const linkItems: MenuItem[] = src
+    ? [
+        { label: 'Refresh now', action: () => void linked?.retry(table.id) },
+        ...(onOpenSheet ? [{ label: 'Open the spreadsheet', action: () => onOpenSheet(src.sheet) }] : []),
+        'sep',
+        { label: 'Unlink (keep these values)', action: () => ctl.unlinkTable() },
+      ]
+    : [];
+  return (
+    <>
+      <span className="tb-sep" />
+      <Drop title="Table rows and columns" label={tableIcon} items={items} />
+      {src && (
+        <Drop
+          title={problem ? `Linked to ${sourceLabel(src)}, which could not be read: ${problem}` : `Linked to ${sourceLabel(src)}; it changes when the spreadsheet does`}
+          label={<span className={`tb-linked${problem ? ' problem' : ''}`}>{problem ? '⚠ Linked' : 'Linked'}</span>}
+          items={linkItems}
+        />
+      )}
+      {!src && (
+        <>
+          <Btn title={`Bold (${scope})`} active={bold} onClick={() => ctl.styleCells({ bold: !bold === headerCell ? undefined : !bold })}>
+            <b>B</b>
+          </Btn>
+          <Btn title={`Italic (${scope})`} active={italic} onClick={() => ctl.styleCells({ italic: italic ? undefined : true })}>
+            <i>I</i>
+          </Btn>
+        </>
+      )}
+      <select className="tb-select" title="Table font" aria-label="Table font" value={table.style?.font ?? ''} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => ctl.styleTable({ font: e.target.value || undefined })}>
+        <option value="">Theme font</option>
+        {table.style?.font && !FONTS.includes(table.style.font) && <option value={table.style.font}>{table.style.font}</option>}
+        {FONTS.map((f) => (
+          <option key={f} value={f}>
+            {f}
+          </option>
+        ))}
+      </select>
+      <select className="tb-select" title="Table font size" aria-label="Table font size" value={SIZES.includes(size) ? size : ''} onMouseDown={(e) => e.stopPropagation()} onChange={(e) => ctl.styleTable({ size: Number(e.target.value) === TABLE_SIZE ? undefined : Number(e.target.value) })}>
+        {!SIZES.includes(size) && <option value="">{size}</option>}
+        {SIZES.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+      {!src && (
+        <>
+          <ColorPicker title={`Text color (${scope})`} icon={<span className="a-icon">A</span>} value={cell?.color} onPick={(c) => ctl.styleCells({ color: c })} />
+          <ColorPicker title={`Cell color (${scope})`} icon={<span className="fill-icon">◆</span>} value={cell?.fill} onPick={(c) => ctl.styleCells({ fill: c })} />
+        </>
+      )}
+      <ColorPicker title="Border color" icon={<span className="fill-icon">▦</span>} value={table.style?.border} onPick={(c) => ctl.styleTable({ border: c })} />
+      {!src && (
+        <>
+          <Btn title={`Align left (${scope})`} active={align === 'left'} onClick={() => ctl.styleCells({ align: undefined })}>
+            ≡
+          </Btn>
+          <Btn title={`Align center (${scope})`} active={align === 'center'} onClick={() => ctl.styleCells({ align: 'center' })}>
+            ☰
+          </Btn>
+          <Btn title={`Align right (${scope})`} active={align === 'right'} onClick={() => ctl.styleCells({ align: 'right' })}>
+            ≣
+          </Btn>
+        </>
+      )}
+    </>
+  );
+}
+
+/** A linked chart's link: refresh it, open its spreadsheet, or keep its data and unlink it (it is changed in the spreadsheet). */
+function ChartLinkControls({ ctl, el, linked, onOpenSheet }: { ctl: DeckController; el: ChartElement; linked?: LinkedTableSync | null; onOpenSheet?(id: string): void }) {
+  const src = el.source!;
+  const problem = linked?.problems.get(el.id);
+  const items: MenuItem[] = [
+    { label: 'Refresh now', action: () => void linked?.retry(el.id) },
+    ...(onOpenSheet ? [{ label: 'Open the spreadsheet to change it', action: () => onOpenSheet(src.sheet) }] : []),
+    'sep',
+    { label: 'Unlink (keep this data)', action: () => ctl.unlinkTable() },
+  ];
+  const where = `${src.title ? `${src.title} › ` : ''}${src.tab}`;
+  return (
+    <>
+      <span className="tb-sep" />
+      <Drop title={problem ? `Linked to a chart on ${where}, which could not be read: ${problem}` : `Linked to a chart on ${where}; it changes when the spreadsheet does`} label={<span className={`tb-linked${problem ? ' problem' : ''}`}>{problem ? '⚠ Linked chart' : 'Linked chart'}</span>} items={items} />
+    </>
+  );
+}
+
+export function DeckToolbar({ ctl, onPresent, onInsertImage, onInsertVideo, onEditImage, onInsertSheetTable, linked, onOpenSheet }: { ctl: DeckController; onPresent(): void; onInsertImage(): void; /** Open the Table from spreadsheet dialog. */ onInsertSheetTable?(): void; /** The page's linked tables, for the state of the selected one. */ linked?: LinkedTableSync | null; onOpenSheet?(id: string): void; /** Open the video dialog; without it the button is not shown. */ onInsertVideo?(): void; /** Open the image editor on a picture element; without it the button is not shown. */ onEditImage?(id: string): void }) {
   const selected = ctl.selected;
   const texts = selected.filter((e): e is TextElement => e.type === 'text');
   const text = texts[0];
   const shapes = selected.filter((e) => e.type === 'shape');
   const line = selected.find((e): e is LineElement => e.type === 'line');
+  const table = ctl.table;
+  const chartEl = selected.length === 1 && selected[0].type === 'chart' ? selected[0] : null;
   const role = text?.role ?? 'body';
   const bold = text ? (text.style?.bold ?? role === 'title') : false;
   const italic = !!text?.style?.italic;
@@ -262,6 +480,7 @@ export function DeckToolbar({ ctl, onPresent, onInsertImage, onInsertVideo, onEd
           </svg>
         </Btn>
       )}
+      <TablePicker ctl={ctl} onFromSheet={onInsertSheetTable} />
       <ShapePicker ctl={ctl} />
       <LinePicker ctl={ctl} />
       {/* The controls for a kind of element are there while one is selected, so the bar holds what can be
@@ -301,6 +520,8 @@ export function DeckToolbar({ ctl, onPresent, onInsertImage, onInsertVideo, onEd
           </select>
         </>
       )}
+      {table && <TableControls ctl={ctl} linked={linked} onOpenSheet={onOpenSheet} />}
+      {chartEl?.source && <ChartLinkControls ctl={ctl} el={chartEl} linked={linked} onOpenSheet={onOpenSheet} />}
       {text && (
         <>
           <span className="tb-sep" />

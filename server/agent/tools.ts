@@ -5,7 +5,8 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { readRange, resolveRange, sheetOverview } from '../../shared/agent/sheetRead.ts';
 import type { AgentContext } from '../../shared/agent/protocol.ts';
-import { ARROW_STYLE_IDS, buildSlide, LAYOUT_IDS, newId, THEME_IDS, type Deck } from '../../shared/deck.ts';
+import { CHART_TYPES, LEGEND_POSITIONS, MAX_SERIES } from '../../shared/chart.ts';
+import { ARROW_STYLE_IDS, buildSlide, LAYOUT_IDS, MAX_TABLE_COLS, MAX_TABLE_ROWS, newId, THEME_IDS, type Deck } from '../../shared/deck.ts';
 import { ALIGNMENTS, BLOCK_TYPES, docNode, MAX_FONT_SIZE, MAX_HEADER_CHARS, MAX_LINE_HEIGHT, MAX_MARGIN, MAX_PARAGRAPH_SPACE, MIN_FONT_SIZE, MIN_LINE_HEIGHT, MIN_MARGIN, PAGE_NUMBER_POSITIONS, PAGE_SIZE_IDS } from '../../shared/doc.ts';
 import { markdownToDoc } from '../../shared/docMarkdown.ts';
 import { docOutline } from '../../shared/agent/docRead.ts';
@@ -39,6 +40,30 @@ const docMarkdown = z
   .describe(
     'Markdown: # headings (1-3 levels; "# text {.title}" and "## text {.subtitle}" make the document title and subtitle), paragraphs separated by blank lines, - and 1. lists (indent 2 spaces to nest), > quotes, ``` code fences, --- rules, ![alt](src) on its own line for an image, **bold**, *italic*, ~~strike~~, `code`, [text](url), <u>underline</u>, <mark>highlight</mark>, <span style="color: #c00">color</span>, <span style="font-family: Georgia; font-size: 14pt">font</span>. A line break inside a paragraph is kept.',
   );
+const chartFields = {
+  type: z.enum(CHART_TYPES).optional().describe('column (default), bar (horizontal), line (for values over time), area, pie (one series, parts of a whole) or scatter (labels are the x values).'),
+  title: z.string().max(200).optional().describe('"" removes it.'),
+  labels: z.string().max(300).optional().describe('Range of the category labels (the x values of a scatter chart), one row or column, e.g. "A6:A21". "" removes them.'),
+  series: z
+    .array(
+      z.object({
+        values: z.string().max(300).describe('Range of the values, one row or column, e.g. "F6:F21" or "\'Other tab\'!B2:B9".'),
+        name: z.string().max(200).optional().describe('A cell holding the name (e.g. "F5"), or the name itself.'),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe('#rrggbb; defaults to the palette.'),
+      }),
+    )
+    .min(1)
+    .max(MAX_SERIES)
+    .optional(),
+  stacked: z.boolean().optional().describe('Column, bar and area charts: stack the series.'),
+  log_scale: z.boolean().optional().describe('Logarithmic value axis, for values spanning several powers of ten.'),
+  legend: z.enum(LEGEND_POSITIONS).optional(),
+  x_title: z.string().max(200).optional().describe('Title of the category (or x) axis; "" removes it.'),
+  y_title: z.string().max(200).optional().describe('Title of the value axis; "" removes it.'),
+  at: z.string().max(10).optional().describe('Cell of its top-left corner, e.g. "H2". Defaults to beside the data.'),
+  width: z.number().int().min(120).max(4000).optional().describe('Pixels (default 600; a column is 100).'),
+  height: z.number().int().min(80).max(4000).optional().describe('Pixels (default 371; a row is 21).'),
+};
 const layout = z
   .enum(LAYOUT_IDS)
   .describe('title (title + subtitle, centered), section (a divider), title-body (title + bullets), two-column (title + two bullet columns), image (title + image + optional caption), blank.');
@@ -100,21 +125,60 @@ const elementSpecV1 = z
   })
   .describe('An element to add or change. Only the properties given change.');
 
-const editElements = <T extends z.ZodType>(spec: T) =>
+const editElements = <T extends z.ZodType>(spec: T, kinds = 'text boxes, images, shapes, tables (type "table"), and lines/arrows/connectors (type "line")') =>
   z
     .object({
       slide: slideNumber,
       set: z.array(spec).max(50).optional().describe('Elements to add (no id) or change (with id).'),
       remove: z.array(z.string()).max(50).optional().describe('Ids of elements to remove.'),
     })
-    .describe('Fine-grained changes to the elements of one slide: move, resize, restyle, add or remove text boxes, images, shapes, and lines/arrows/connectors (type "line"). Prefer update_slide for text changes.');
+    .describe(`Fine-grained changes to the elements of one slide: move, resize, restyle, add or remove ${kinds}. Prefer update_slide for text changes.`);
 
 /** edit_elements as version 1 of the ChatGPT plugin's tools has it. */
-export const editElementsV1 = editElements(elementSpecV1);
+export const editElementsV1 = editElements(elementSpecV1, 'text boxes, images, shapes, and lines/arrows/connectors (type "line")');
 
 const elementSpec = elementSpecV1
   .extend({
-    type: z.enum(['text', 'image', 'video', 'shape', 'line']).optional().describe('Required for a new element. Use "line" for lines, arrows and connectors, and "video" for a video that plays on the slide.'),
+    type: z.enum(['text', 'image', 'video', 'shape', 'line', 'table', 'chart']).optional().describe('Required for a new element. Use "line" for lines, arrows and connectors, "video" for a video that plays on the slide, "table" for a table of text cells, and "chart" for a chart of a spreadsheet (with link).'),
+    size: z.number().min(4).max(400).optional().describe('Font size in points (text elements and shape labels, which default to 18; tables, which default to 16).'),
+    color: z.string().max(64).optional().describe('Text CSS color of text elements, shape labels and tables; "" uses the theme color.'),
+    font: z.string().max(64).optional().describe('Font family of text elements, shape labels and tables, e.g. "Inter"; "" uses the theme font.'),
+    rows: z
+      .array(z.array(z.string().max(2000)).max(MAX_TABLE_COLS))
+      .min(1)
+      .max(MAX_TABLE_ROWS)
+      .optional()
+      .describe('Tables: the text of every cell, row by row (short rows are padded with empty cells; "\\n" breaks a line). Replaces all the cells; to change a few, use cells. The rows share the box height (h), about 40 points each reads well at the default size.'),
+    cells: z
+      .array(
+        z.object({
+          row: z.number().int().min(1).describe('1-based row.'),
+          col: z.number().int().min(1).describe('1-based column.'),
+          text: z.string().max(2000).optional(),
+          bold: z.boolean().optional(),
+          italic: z.boolean().optional(),
+          color: z.string().max(64).optional().describe('Text CSS color; "" removes it.'),
+          fill: z.string().max(64).optional().describe('Background CSS color; "" removes it.'),
+          align: z.enum(['left', 'center', 'right']).optional().describe('Defaults to left.'),
+        }),
+      )
+      .max(500)
+      .optional()
+      .describe('Tables: change the text or look of single cells, applied after rows.'),
+    link: z
+      .object({
+        sheet_id: z.string().describe('The spreadsheet (list_sheets gives ids).'),
+        chart_id: z.string().max(200).optional().describe("Charts: the spreadsheet's chart to show (read_other_sheet lists each tab's charts). The slide's chart then follows it and its data; it is changed in the spreadsheet (edit_chart)."),
+        range: z.string().max(80).optional().describe('Tables: A1 range, with the tab when it is not the first: "Sales!A1:D8", or just the tab ("Sales!") for its used part. Without a range the table shows the used part of the first tab and follows it as rows and columns are added; prefer that for a whole table of data.'),
+      })
+      .nullable()
+      .optional()
+      .describe("Tables: show a spreadsheet range instead of rows: the cells are the range's values and look, and the table updates when the spreadsheet changes (its cells are not edited here). Use it for a table of a spreadsheet's figures. Charts (type \"chart\"): give chart_id to show one of the spreadsheet's charts. null unlinks the table or chart, keeping what it shows."),
+    header: z.boolean().optional().describe('Tables: the first row is a header row (bold, on the theme accent). New tables have one.'),
+    banded: z.boolean().optional().describe('Tables: shade every other row.'),
+    col_widths: z.array(z.number().min(1)).max(MAX_TABLE_COLS).optional().describe('Tables: column widths in points (scaled to the table width w); [] makes them equal.'),
+    stroke: z.string().max(64).optional().describe('Shape outline color, or the color of a line. Tables: the cell border color, or "none".'),
+    header_fill: z.string().max(64).optional().describe('Tables: background CSS color of the header row; "" uses the theme accent.'),
     src: z.string().optional().describe('Image elements: an http(s) image URL, or the /api/images/... address of an image attached to the chat. Video elements: a YouTube link, or the /api/files/<id> address of a video among the stored files (list_files gives the id).'),
     start_angle: z
       .number()
@@ -238,6 +302,22 @@ export const schemas = {
     .describe(
       "Choose which values a column of the tab's filter shows, like picking values in the header dropdown. Criteria on different columns combine with AND. The tab must already have a filter (use set_filter first). Returns the number of visible data rows.",
     ),
+  add_chart: z
+    .object({
+      tab: tab.describe('Tab the chart goes on (and its ranges are read from). Defaults to the active tab.'),
+      ...chartFields,
+      data_range: z
+        .string()
+        .optional()
+        .describe('The block of data to chart, with its header row and label column (e.g. "A5:F21"): the header names the series, a first column of text or dates is the labels, and each other column of numbers is a series. Instead of labels and series.'),
+    })
+    .describe(
+      'Add a chart over the grid of a tab, of a range of its data, like Insert › Chart. Give data_range for the usual chart of a table, or labels and series for exact ranges. The chart reads the cells live, so it follows edits and formulas. Returns the chart with its id.',
+    ),
+  edit_chart: z
+    .object({ tab, chart_id: z.string().describe('The chart (get_sheet_overview lists each tab\'s charts).'), ...chartFields })
+    .describe("Change a chart: its type, ranges, titles, legend, axes, place or size. Only what is given changes; series replaces the chart's series."),
+  delete_chart: z.object({ tab, chart_id: z.string() }).describe('Remove a chart from a tab.'),
   set_column_width: z
     .object({ tab, columns: z.string().describe('Column or columns, e.g. "B" or "B:D".'), width: z.number().int().min(20).max(2000).describe('Width in pixels; the default is 100.') })
     .describe('Set column widths.'),
@@ -352,13 +432,15 @@ export const schemas = {
         .array(
           z
             .object({
-              op: z.enum(['crop', 'rotate', 'straighten', 'flip', 'resize', 'adjust', 'filter', 'text', 'shape', 'redact', 'remove_background']).describe(
-                'crop: keep the rectangle x, y, width, height. rotate: degrees 90, 180 or 270 clockwise (negative for counterclockwise). straighten: degrees between -45 and 45. flip: axis. resize: scale down to width (the height follows; never up). adjust: any of brightness, contrast, saturation, vibrance, hue, blur. filter: name. text: text at x, y (its top left corner), with size, color and so on. shape: kind, in the box x, y, width, height, or for a line or arrow from x1, y1 to x2, y2 (an arrow points at x2, y2). redact: hide the rectangle x, y, width, height. remove_background: make the background transparent (PNG and WebP keep it; a JPEG gets black).',
+              op: z.enum(['crop', 'rotate', 'straighten', 'flip', 'resize', 'adjust', 'filter', 'text', 'shape', 'overlay', 'redact', 'remove_background']).describe(
+                'crop: keep the rectangle x, y, width, height. rotate: degrees 90, 180 or 270 clockwise (negative for counterclockwise). straighten: degrees between -45 and 45. flip: axis. resize: scale down to width (the height follows; never up). adjust: any of brightness, contrast, saturation, vibrance, hue, blur. filter: name. text: text at x, y (its top left corner), with size, color and so on. shape: kind, in the box x, y, width, height, or for a line or arrow from x1, y1 to x2, y2 (an arrow points at x2, y2). overlay: put another picture (source) on top, its top left corner at x, y, width wide (the height keeps its shape; give height too to stretch it), with opacity; with no size it keeps its own, made smaller to stay inside the picture. It is a layer of its own the user can still move and resize in the image editor. redact: hide the rectangle x, y, width, height. remove_background: make the background transparent (PNG and WebP keep it; a JPEG gets black).',
               ),
-              x: z.number().optional().describe('Left edge, in pixels from the left of the picture (crop, redact, text, boxed shapes).'),
+              x: z.number().optional().describe('Left edge, in pixels from the left of the picture (crop, redact, text, overlay, boxed shapes).'),
               y: z.number().optional().describe('Top edge, in pixels from the top of the picture.'),
-              width: z.number().positive().optional().describe('Width in pixels (crop, redact, boxed shapes, resize). For text: where it wraps; defaults to the rest of the picture.'),
-              height: z.number().positive().optional().describe('Height in pixels (crop, redact, boxed shapes).'),
+              width: z.number().positive().optional().describe('Width in pixels (crop, redact, overlay, boxed shapes, resize). For text: where it wraps; defaults to the rest of the picture.'),
+              height: z.number().positive().optional().describe('Height in pixels (crop, redact, overlay, boxed shapes).'),
+              source: z.string().optional().describe('overlay: the picture to put on top: an attached picture’s /api/images/... address (from <attached_images>), another picture’s /api/images/... address, or a stored picture’s file_id.'),
+              opacity: z.number().min(0).max(100).optional().describe('overlay: how solid the picture on top is, in percent. Default 100.'),
               degrees: z.number().optional().describe('rotate and straighten.'),
               axis: z.enum(['horizontal', 'vertical']).optional().describe('flip: horizontal mirrors left and right.'),
               brightness: z.number().min(-100).max(100).optional(),
@@ -394,7 +476,7 @@ export const schemas = {
       save: z.enum(['copy', 'replace']).optional().describe('For file_id. copy (default): a new file next to the original, which stays as it is. replace: save over the original (the user is asked; the version before is kept for one undo).'),
     })
     .describe(
-      'Edit a picture exactly, with the app’s image editor (a stored picture file by file_id, or a picture inside a presentation, document or spreadsheet by image): crop, rotate, flip, resize, adjust colors, filters, add text, shapes and arrows, redact, remove the background. Every pixel you do not name stays as it was. Call view_image first: it reports the picture’s width and height, which positions are given in. The result is attached after the tool results; look at it, and if something landed in the wrong place call transform_image again on the original with better numbers. If the user has the picture open in the image editor, the edits are made there instead, as one undo step, and are saved when the user saves.',
+      'Edit a picture exactly, with the app’s image editor (a stored picture file by file_id, or a picture inside a presentation, document or spreadsheet by image): crop, rotate, flip, resize, adjust colors, filters, add text, shapes and arrows, put another picture on top (overlay: a logo, a signature, a pasted screenshot), redact, remove the background. Every pixel you do not name stays as it was. Call view_image first: it reports the picture’s width and height, which positions are given in. The result is attached after the tool results; look at it, and if something landed in the wrong place call transform_image again on the original with better numbers. If the user has the picture open in the image editor, the edits are made there instead, as one undo step, and are saved when the user saves. An overlay on a file_id with no save opens the picture in the image editor and is made there, so the user can still move and resize the picture on top and saves it themselves; give save only when they want a finished file now.',
     ),
   delete_slides: z.object({ slides: z.array(slideNumber).min(1).max(100) }).describe('Delete slides by number. The user is asked to confirm.'),
   move_slide: z.object({ slide: slideNumber, to: slideNumber.describe('The slide number it should have afterwards.') }).describe('Move a slide to another position.'),
