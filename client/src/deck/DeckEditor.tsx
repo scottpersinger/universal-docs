@@ -112,7 +112,19 @@ function resizeBox(orig: Box, h: Handle, dx: number, dy: number, ratio: number |
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(hh) };
 }
 
-export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckController; onImageFiles(files: File[]): void; /** Open the image editor on a picture element (a double-click on it). */ onEditImage?(id: string): void }) {
+export function DeckEditor({
+  ctl,
+  onImageFiles,
+  onEditImage,
+  onContextMenu,
+}: {
+  ctl: DeckController;
+  onImageFiles(files: File[]): void;
+  /** Open the image editor on a picture element (a double-click on it). */
+  onEditImage?(id: string): void;
+  /** A right-click on the slide, after the element under it (if any) is selected: the page shows its menu there. */
+  onContextMenu?(at: { x: number; y: number }): void;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 450 });
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -546,6 +558,19 @@ export function DeckEditor({ ctl, onImageFiles, onEditImage }: { ctl: DeckContro
       onMouseMove={onPointerMove}
       onMouseLeave={() => hoverFrame && setHoverFrame(null)}
       tabIndex={-1}
+      onContextMenu={(e) => {
+        // Text being typed keeps the system's menu (its spelling suggestions); so does a crop in progress.
+        if (!onContextMenu || ctl.editing || ctl.cropping || ctl.tool) return;
+        e.preventDefault();
+        const at = (e.target as Element).closest?.('[data-el]')?.getAttribute('data-el');
+        const hit = at ? slide.elements.find((el) => el.id === at) : undefined;
+        const el = hit ? through(e, hit) : clickTarget(slide.elements, null, ...toSlide(e), reach);
+        // The element clicked is what the menu acts on: it joins the selection only if it is not in it already.
+        if (el && !ctl.selection.includes(el.id)) ctl.select([el.id]);
+        else if (!el) ctl.select([]);
+        wrapRef.current?.focus();
+        onContextMenu({ x: e.clientX, y: e.clientY });
+      }}
       onMouseDown={(e) => {
         if (e.button === 0 && ctl.tool) {
           startDraw(e);

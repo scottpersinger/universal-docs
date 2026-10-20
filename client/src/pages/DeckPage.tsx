@@ -29,6 +29,7 @@ import { useDeckFonts } from '../deck/fonts.ts';
 import { useFavicon } from '../favicon.ts';
 import { DeckToolbar, LAYOUT_NAMES, shapeMenuItems, tableMenuItems } from '../deck/DeckToolbar.tsx';
 import { downloadPptx } from '../deck/pptx.ts';
+import { copyPicture } from '../deck/copyPicture.ts';
 import { VideoDialog } from '../components/VideoDialog.tsx';
 import { SheetTableDialog } from '../deck/SheetTableDialog.tsx';
 import { SheetChartDialog } from '../deck/SheetChartDialog.tsx';
@@ -154,7 +155,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   const [dialog, setDialog] = useState<Dialog>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; index: number } | null>(null);
+  // A right-click menu: a slide's (on its thumbnail, `index`) or the selected elements' (on the slide).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; index?: number } | null>(null);
   const [showNotes, setShowNotes] = useState(true);
   const [printing, setPrinting] = useState(false);
   const [, setSaveTick] = useState(0);
@@ -233,6 +235,23 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
     [ctl, notify],
   );
 
+  // Copy: the selected elements for pasting here, and a single picture onto the system clipboard as well. A paste
+  // is of the elements copied here, unless the window has lost focus since (something may have been copied in
+  // another app): then a picture on the system clipboard is added as a new picture.
+  const copiedHere = useRef(false);
+  const copy = useCallback(() => {
+    if (!ctl.selection.length) return;
+    ctl.copySelected();
+    copiedHere.current = true;
+    const only = ctl.selected.length === 1 ? ctl.selected[0] : null;
+    if (only?.type === 'image') copyPicture(only).catch((e: unknown) => notify(e instanceof Error ? e.message : String(e)));
+  }, [ctl, notify]);
+  useEffect(() => {
+    const away = () => (copiedHere.current = false);
+    window.addEventListener('blur', away);
+    return () => window.removeEventListener('blur', away);
+  }, []);
+
   // The picture element open in the image editor. Saving stores the edited picture as a new image and puts it
   // on the slide as one step, so undo brings the picture back as it was.
   const [editingImage, setEditingImage] = useState<string | null>(null);
@@ -300,7 +319,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         e.preventDefault();
         ctl.selection.length ? ctl.duplicateSelected() : ctl.duplicateSlide();
       } else if (mod && k === 'c') {
-        if (ctl.selection.length) ctl.copySelected();
+        copy();
       } else if (mod && k === 'a') {
         e.preventDefault();
         ctl.select(ctl.slide.elements.map((el) => el.id));
@@ -350,7 +369,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
     const onPaste = (e: ClipboardEvent) => {
       if (ctl.presenting || imageDialogOpen() || isTyping(e.target)) return;
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
-      if (files.length) {
+      if (files.length && !copiedHere.current) {
         e.preventDefault();
         void addImageFiles(files);
       } else ctl.paste();
@@ -373,7 +392,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
       window.removeEventListener('keydown', onAssist, true);
       window.removeEventListener('paste', onPaste);
     };
-  }, [ctl, addImageFiles]);
+  }, [ctl, addImageFiles, copy]);
 
   // Close menus on outside click.
   useEffect(() => {
@@ -443,7 +462,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         { label: 'Undo', shortcut: `${MOD}Z`, disabled: !ctl.store.canUndo(), action: () => ctl.undo() },
         { label: 'Redo', shortcut: `${MOD}Y`, disabled: !ctl.store.canRedo(), action: () => ctl.redo() },
         'sep',
-        { label: 'Copy', shortcut: `${MOD}C`, disabled: !ctl.selection.length, action: () => ctl.copySelected() },
+        { label: 'Copy', shortcut: `${MOD}C`, disabled: !ctl.selection.length, action: copy },
         { label: 'Paste', shortcut: `${MOD}V`, action: () => ctl.paste() },
         { label: 'Duplicate', shortcut: `${MOD}D`, action: () => (ctl.selection.length ? ctl.duplicateSelected() : ctl.duplicateSlide()) },
         { label: 'Delete', shortcut: 'Delete', disabled: !ctl.selection.length, action: () => ctl.deleteSelected() },
@@ -506,6 +525,27 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   }[ctl.saver.status];
 
   const onThumbContextMenu = (e: MouseEvent, index: number) => setCtxMenu({ x: e.clientX, y: e.clientY, index });
+  /** The right-click menu on the slide: for the selected elements, or with none, for the slide. */
+  const elementMenu = (): MenuItem[] => {
+    const picture = ctl.selected.length === 1 && ctl.selected[0].type === 'image' ? ctl.selected[0] : null;
+    if (!ctl.selection.length)
+      return [
+        { label: 'Paste', shortcut: `${MOD}V`, action: () => ctl.paste() },
+        { label: 'Select all', shortcut: `${MOD}A`, action: () => ctl.select(ctl.slide.elements.map((e) => e.id)) },
+      ];
+    return [
+      { label: 'Copy', shortcut: `${MOD}C`, action: copy },
+      { label: 'Paste', shortcut: `${MOD}V`, action: () => ctl.paste() },
+      { label: 'Duplicate', shortcut: `${MOD}D`, action: () => ctl.duplicateSelected() },
+      { label: 'Delete', shortcut: 'Delete', action: () => ctl.deleteSelected() },
+      ...(picture ? ['sep' as const, { label: 'Crop', action: () => ctl.startCropping(picture.id) }, { label: 'Edit image…', action: () => setEditingImage(picture.id) }] : []),
+      'sep',
+      { label: 'Bring to front', action: () => ctl.reorder(ctl.selection, 'front') },
+      { label: 'Bring forward', action: () => ctl.reorder(ctl.selection, 'forward') },
+      { label: 'Send backward', action: () => ctl.reorder(ctl.selection, 'backward') },
+      { label: 'Send to back', action: () => ctl.reorder(ctl.selection, 'back') },
+    ];
+  };
 
   return (
     <div className="workbench deck-page">
@@ -583,7 +623,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
             <ThumbnailStrip ctl={ctl} width={tray.width} onContextMenu={onThumbContextMenu} />
             <ResizeHandle panel={tray} side="left" label="Resize slide thumbnails" className="deck-thumbs-resize" />
             <div className="deck-main">
-              <DeckEditor ctl={ctl} onImageFiles={(files) => void addImageFiles(files)} onEditImage={setEditingImage} />
+              <DeckEditor ctl={ctl} onImageFiles={(files) => void addImageFiles(files)} onEditImage={setEditingImage} onContextMenu={(at) => setCtxMenu(at)} />
               {showNotes && <NotesPane ctl={ctl} />}
             </div>
           </div>
@@ -602,7 +642,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
 
       {ctxMenu && (
         <div onMouseDown={(e) => e.stopPropagation()}>
-          <MenuList items={slideMenu(ctxMenu.index)} onDone={() => setCtxMenu(null)} style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }} />
+          <MenuList items={ctxMenu.index === undefined ? elementMenu() : slideMenu(ctxMenu.index)} onDone={() => setCtxMenu(null)} style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }} />
         </div>
       )}
 
