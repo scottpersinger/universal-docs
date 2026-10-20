@@ -4,6 +4,7 @@ import { EDITABLE_IMAGE_TYPES, HTML_TYPE, PREVIEW_FILE_TYPES, type StoredFile } 
 import { HtmlEditor } from '../components/HtmlEditor.tsx';
 import { HtmlPreview } from '../components/HtmlPreview.tsx';
 import { TextFileEditor } from '../components/TextFileEditor.tsx';
+import { JsonViewer } from '../components/JsonViewer.tsx';
 import { ZipBrowser } from '../components/ZipBrowser.tsx';
 import { isZipName } from '../../../shared/zip.ts';
 import { ImageFileEditor } from '../image/ImageFileEditor.tsx';
@@ -125,6 +126,8 @@ export function FilePage() {
 
   const previewable = !!file && PREVIEW_FILE_TYPES.includes(file.type);
   const editableImage = !!file && EDITABLE_IMAGE_TYPES.includes(file.type);
+  // A JSON file (small enough to edit as text) is shown as a tree; Edit opens it in the text editor.
+  const json = !!file?.text && (file.type === 'application/json' || /\.json$/i.test(file.filename));
   const revert = () =>
     api.revertFile(id).then(
       (r) => {
@@ -149,6 +152,11 @@ export function FilePage() {
           {file?.type === HTML_TYPE && (
             <button className={`btn${editing ? ' active' : ''}`} onClick={() => setEditing(!editing)} title={editing ? 'Run the page as a browser would, with its scripts and links working' : "Select, edit, delete and recolor the page's elements"}>
               {editing ? 'Preview' : 'Edit'}
+            </button>
+          )}
+          {json && (
+            <button className={`btn${editing ? ' active' : ''}`} onClick={() => setEditing(!editing)} title={editing ? 'Show the JSON as a tree' : 'Edit the JSON as text'}>
+              {editing ? 'View' : 'Edit'}
             </button>
           )}
           {editableImage && !editing && canRevert && (
@@ -242,6 +250,8 @@ export function FilePage() {
             backgroundRemovalLoader={loadBackgroundRemoval}
             onClose={() => setEditing(false)}
           />
+        ) : json && !editing ? (
+          <JsonViewer key={`${file.id}:${version}`} file={file} onEdit={() => setEditing(true)} />
         ) : file.text && !previewable ? (
           // Plain text, whatever its name: a log, a config file, source code.
           <TextFileEditor key={`${file.id}:${version}`} file={file} onSaved={setFile} />

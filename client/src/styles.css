@@ -4791,6 +4791,87 @@ button.agent-tool-label:hover {
   padding: 24px;
 }
 
+/* A JSON file as a tree (JsonViewer). */
+.json-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  background: var(--chrome);
+}
+.json-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  font-size: 13px;
+}
+.json-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.json-children {
+  padding-left: 20px;
+  border-left: 1px solid #f1f3f4;
+  margin-left: 7px;
+}
+.json-row {
+  display: flex;
+  align-items: baseline;
+}
+.json-toggle {
+  flex: 0 0 16px;
+  width: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+span.json-toggle {
+  cursor: default;
+}
+.json-more {
+  padding: 0 4px;
+  margin: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.json-size {
+  margin-left: 8px;
+  color: var(--muted);
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+}
+.json-key {
+  color: #881391;
+}
+.json-string {
+  color: #1a7f37;
+}
+.json-number {
+  color: #1a1aa6;
+}
+.json-bool,
+.json-null {
+  color: #b5260b;
+}
+
 /* A file the app does not open: listed, with its menu, but not a link. */
 .sheet-list tbody tr.no-open,
 .file-card.no-open {

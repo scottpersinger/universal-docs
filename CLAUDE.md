@@ -124,10 +124,12 @@ type stripping; imports use `.ts` extensions.
   passing requests to the server of the window in front (`frontServer`) with a secret made for each run. Agents sign in
   with OAuth 2.1 (`desktop/mcpAuth.js`: registration, PKCE, refresh; the person allows each agent in a native
   dialog, not on the web page; tokens hashed in `mcp-auth.json` in the app's data folder), and File › Connect
-  an Agent (MCP)… shows the `claude mcp add` command and disconnects them. For Claude Code it is also a plugin,
-  `claude-plugin/` (the server and a skill, `skills/mcp-docs/SKILL.md`; the marketplace is `.claude-plugin/marketplace.json`
-  at the root), installed with the app by `npx @scottpersinger/mcp-docs` (`installer/`, its own npm package; its version,
-  the plugin's and the marketplace entry's are the desktop release's: `npm run release -- <version>` sets them all and tags
+  an Agent (MCP)… shows the `claude mcp add` command and disconnects them. For Claude Code and Codex it is also a plugin,
+  `claude-plugin/` (the server and a skill, `skills/mcp-docs/SKILL.md`; manifests `.claude-plugin/plugin.json` and
+  `.codex-plugin/plugin.json`; the marketplaces are `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`
+  at the root), installed with the app by `npx @scottpersinger/mcp-docs` (`installer/`, its own npm package, which asks
+  which agents to add it to and prints the MCP address for any other client; its version, the plugins' and the Claude
+  marketplace entry's are the desktop release's: `npm run release -- <version>` sets them all and tags
   `desktop-v<version>`, and pushing the tag has `.github/workflows/desktop-release.yml` build the app, make the GitHub
   release and publish the installer to npm, with the notes in `release-notes/<version>.md`). A file
   the model opens, creates or imports is shown in the window (`FileHub.onShow`, a `show` message to `main.js`,
@@ -177,6 +179,9 @@ type stripping; imports use `.ts` extensions.
   copy goes in the trash) and Save a copy makes `<name>-signed.pdf`. The signature is drawn, typed or uploaded in
   `SignatureDialog` (signature_pad); a user keeps several, picked from the Sign menu (`server/signatures.ts`,
   `/api/settings/signatures`; in the desktop app in its settings database).
+- A stored file that is plain text (`StoredFile.text`) is edited as text on its page (`TextFileEditor`); a JSON file
+  is shown as a tree first (`JsonViewer`: all open, Collapse all / Expand all, each object or array on its own; a very
+  large one opens only its top levels), with Edit for the text.
 - A zip file's page lists what it holds and opens each file in it read-only (`client/src/components/ZipBrowser.tsx`,
   the folder and file in the address as `?dir=` / `?entry=`). The server never unpacks to disk
   (`server/zipView.ts`): `GET /api/files/:id/zip` lists the files, `/zip/entry?path=` sends one (inline only
