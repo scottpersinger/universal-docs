@@ -67,6 +67,21 @@ describe('charts in Excel files', () => {
     const [prices, notes] = back.workbook.tabs;
     expect(prices.charts!.map(strip)).toEqual(wb.tabs[0].charts!.map(strip));
     expect(notes.charts!.map(strip)).toEqual([{ ...strip(wb.tabs[1].charts![0]), categories: "'Prices 2025'!A2:A4" }]);
+    // Each chart keeps its id, so a slide linked to it still finds it after the file is read again.
+    expect(back.workbook.tabs.flatMap((t) => t.charts!.map((c) => c.id))).toEqual(wb.tabs.flatMap((t) => t.charts!.map((c) => c.id)));
+  });
+
+  it('gives a chart made elsewhere the same id every time the file is read', async () => {
+    const zip = await JSZip.loadAsync(await workbookXlsx(book(), 'Charts'));
+    // As Excel would have written it: no id of ours.
+    for (const n of Object.keys(zip.files).filter((f) => /^xl\/drawings\/drawing\d+\.xml$/.test(f))) {
+      zip.file(n, (await zip.file(n)!.async('string')).replace(/<a:extLst>.*?<\/a:extLst>/g, ''));
+    }
+    const file = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    const ids = async () => (await importXlsx(file)).workbook.tabs.flatMap((t) => (t.charts ?? []).map((c) => c.id));
+    const first = await ids();
+    expect(first).toEqual(['xlsx-1-2', 'xlsx-1-3', 'xlsx-1-4', 'xlsx-2-2']);
+    expect(await ids()).toEqual(first);
   });
 
   it('reads a workbook whose drawings are named by absolute paths (as openpyxl writes them), which ExcelJS fails on', async () => {

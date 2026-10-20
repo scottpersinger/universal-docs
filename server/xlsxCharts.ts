@@ -17,6 +17,11 @@ const NS_C = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const NS_XDR = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing';
+/**
+ * A chart's own id, kept in its drawing object (an extension, as Office keeps its creation ids there), so that
+ * reading the file again gives the chart the same id and a slide linked to it (ChartSource) still finds it.
+ */
+export const CHART_ID_EXT = 'urn:universal-docs:chart-id';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const REL_DRAWING = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing';
 const CT_CHART = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
@@ -146,7 +151,7 @@ function drawingXml(charts: Chart[], firstRel: number): string {
       (ch, i) =>
         `<xdr:oneCellAnchor><xdr:from><xdr:col>${ch.anchor.c}</xdr:col><xdr:colOff>${Math.round(ch.anchor.dx * EMU_PER_PX)}</xdr:colOff><xdr:row>${ch.anchor.r}</xdr:row><xdr:rowOff>${Math.round(ch.anchor.dy * EMU_PER_PX)}</xdr:rowOff></xdr:from>` +
         `<xdr:ext cx="${Math.round(ch.w * EMU_PER_PX)}" cy="${Math.round(ch.h * EMU_PER_PX)}"/>` +
-        `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i + 2}" name="${esc(ch.title ? `Chart ${i + 1}: ${ch.title}` : `Chart ${i + 1}`).slice(0, 250)}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>` +
+        `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i + 2}" name="${esc(ch.title ? `Chart ${i + 1}: ${ch.title}` : `Chart ${i + 1}`).slice(0, 250)}"><a:extLst><a:ext uri="${CHART_ID_EXT}"><ud:chart xmlns:ud="urn:universal-docs" id="${esc(ch.id)}"/></a:ext></a:extLst></xdr:cNvPr><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>` +
         `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="${NS_C}"><c:chart xmlns:c="${NS_C}" r:id="rId${firstRel + i}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>`,
     )
     .join('');
@@ -383,7 +388,12 @@ export async function readXlsxCharts(zip: JSZip, tabs: Tab[], renames: Map<strin
       const chartRel = rel(drawingRels, rid);
       const chartPart = chartRel ? resolve(drawingPart, String(attr(chartRel, 'Target'))) : null;
       const xml = chartPart ? await zip.file(chartPart)?.async('string') : undefined;
-      const read = xml ? readChart(xml, renames.get(sheet.name) ?? sheet.name, renames, crypto.randomUUID()) : null;
+      // The id it was written with; one made elsewhere (Excel) is named by its tab and its object in the
+      // drawing, which Excel keeps, so it is the same every time the file is read.
+      const props = obj(obj(frame?.nvGraphicFramePr)?.cNvPr);
+      const ext = arr(obj(props?.extLst)?.ext).find((e) => attr(e, 'uri') === CHART_ID_EXT);
+      const id = attr(obj(ext?.chart), 'id') || `xlsx-${i + 1}-${attr(props, 'id') ?? charts.length + 1}`;
+      const read = xml ? readChart(xml, renames.get(sheet.name) ?? sheet.name, renames, id) : null;
       if (!read) {
         dropped++;
         continue;
