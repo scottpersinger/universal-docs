@@ -416,6 +416,6 @@ if (app && !appPids(app).length) {
   say(`\nStarted ${APP_NAME}.`);
 }
 say(`
-${APP_NAME}'s MCP server is at ${MCP_URL} while the app is running. Any MCP client on this Mac that
+While ${APP_NAME} is running, its MCP server is at ${MCP_URL}. Any MCP client on this Mac that
 supports streamable HTTP and OAuth can connect to it there; ${APP_NAME} asks you to allow each one.`);
 if (done.length) say(`\nNext:\n${done.map(({ agent, step }) => `  - ${agent.next[step]}`).join('\n')}`);
