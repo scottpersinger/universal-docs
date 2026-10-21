@@ -1,7 +1,7 @@
 # The web in the desktop app, and Download as PDF
 
-Status: phases 1 (Download as PDF), 2 (`export_pdf`) and 3 (Web tabs) are built, except registering the desktop
-as a device, which waits for phase 5; the rest is design. Phase 1 came first because it stands on its
+Status: phases 1 to 4 are built (Download as PDF, `export_pdf`, Web tabs, copying between them), except
+registering the desktop as a device, which waits for phase 5 (keep updated), which is design. Phase 1 came first because it stands on its
 own in the hosted app and the desktop's "keep updated" PDFs depend on it. Decisions still open are listed at
 the end.
 
@@ -177,8 +177,17 @@ the computer's), which the hosted app shows and can remove.
   `mcpdocs://download?file=<kind>/<id>`, which the desktop app handles (it registers the scheme) by opening
   the same dialog in a Local tab.
 
-The desktop does the copying: it has the web tab's session, fetches the file (or its export or PDF) from the
-hosted app and writes it into the folder through the folder's server, or reads the local file and uploads it.
+The desktop does the copying (`server/webCopy.ts`): the folder's server asks the hosted app through `Web`,
+which `main.js` answers with the Web tab's session (`WebBridge`, `webRequest`; only `/api/` paths), so the
+person's web sign-in never reaches the folder's server. Documents, presentations and spreadsheets travel as the
+app's JSON (the hosted app's `export?format=json`, its create routes) with their pictures copied and their
+addresses changed, so nothing goes through an Office file on the way; locally they are then written as an
+Office file (the desktop's own exporters), the app's format, or the hosted app's PDF. Videos in a file are not
+copied (they show only where the file came from), and the copy says so. The local server's routes are
+`/api/web/status`, `/folders`, `/upload`, `/preview` and `/download`; the dialogs are
+`client/src/components/WebCopyDialogs.tsx`. A Web tab's Download to Folder… (Download to MCP Docs in a
+browser) is `mcpdocs://download?kind=&id=&title=`, which opens a Local tab's home page with `?webDownload=`;
+Open on the web after an upload is `mcpdocs://open-web?path=`.
 
 ### Keep updated
 

@@ -60,6 +60,7 @@ import { ClaudeAgentDriver, type ClaudeAgentOptions } from './agent/claudeAgent.
 import { mountLocalMcp } from './localMcp.ts';
 import { MAX_OFFICE_ENTRY_BYTES, openZip, ZipError, zipEntries, zipEntryBytes, zipOfficeView } from './zipView.ts';
 import { isZipName } from '../shared/zip.ts';
+import { downloadFromWeb, uploadToWeb, webFolders, WebCopyError, webPreview, webStatus, type DownloadFormat, type LibraryKind, type Web } from './webCopy.ts';
 import { NotPrintableError, paperFor, PdfMaker, PlaywrightRenderer, PRINT_COOKIE, PrintError, type PdfRenderer } from './pdf.ts';
 
 const SESSION_COOKIE = 'sid';
@@ -146,6 +147,8 @@ export interface AppOptions {
     openFolder?: (dir: string) => void;
     /** Ask the person for a folder to open, in the desktop app's Open Folder dialog. */
     chooseFolder?: () => void;
+    /** The person's account on the web, through the Web tab's session (webCopy.ts): Upload to Web and Download to Folder. */
+    web?: Web;
     /** Options for the assistant run on the user's own Claude Code (tests pass a stub query and executable). */
     claudeAgent?: Partial<ClaudeAgentOptions>;
     /** Show how to connect an agent to the app's MCP server, in the desktop app's dialog. */
@@ -184,6 +187,9 @@ function handoffPage(link: string): string {
 <script>location.href = ${JSON.stringify(link).replace(/</g, '\\u003c')};</script>
 </body></html>`;
 }
+
+const LIBRARY_KINDS: readonly LibraryKind[] = ['doc', 'deck', 'sheet', 'markdown', 'file'];
+const DOWNLOAD_FORMATS: readonly DownloadFormat[] = ['office', 'native', 'pdf', 'csv', 'as-is'];
 
 function cleanTitle(t: unknown): string | null {
   if (typeof t !== 'string') return null;
@@ -1430,6 +1436,39 @@ export async function buildApp(opts: AppOptions) {
       recentOpens.cacheSystem(found);
       return { files: found.files.map((f) => ({ ...f, kind: listedKind(f.path) })), blocked: found.blocked };
     });
+
+    // Copying between the folder and the person's account on the web (webCopy.ts), with the Web tab's session.
+    const web = opts.local?.web;
+    if (web && folder && sheets instanceof LocalSheetStore && storedFiles instanceof LocalFileStore) {
+      const copyStores = (req: FastifyRequest) => ({ userId: req.user!.id, sheets, files: storedFiles, images, folder });
+      const copying = async <T>(reply: FastifyReply, work: () => Promise<T>) => {
+        try {
+          return await work();
+        } catch (e) {
+          // Not 401, which would read as this app's own sign-in.
+          if (e instanceof WebCopyError) return reply.code(e.signedOut ? 409 : 400).send({ error: e.message, ...(e.signedOut ? { code: 'web-signed-out' } : {}) });
+          throw e;
+        }
+      };
+      r.get('/api/web/status', async () => webStatus(web));
+      r.get('/api/web/folders', async (req, reply) => copying(reply, async () => ({ folders: await webFolders(web, String((req.query as { path?: string }).path ?? '')) })));
+      r.post('/api/web/upload', async (req, reply) => {
+        const { id, webFolder } = (req.body ?? {}) as { id?: unknown; webFolder?: unknown };
+        if (typeof id !== 'string' || (webFolder !== undefined && typeof webFolder !== 'string')) return reply.code(400).send({ error: 'Give the file id and the web folder.' });
+        return copying(reply, () => uploadToWeb(web, copyStores(req), id, webFolder ?? ''));
+      });
+      r.get('/api/web/preview', async (req, reply) => {
+        const { kind, id } = req.query as { kind?: string; id?: string };
+        if (!id || !LIBRARY_KINDS.includes(kind as LibraryKind)) return reply.code(400).send({ error: 'Give the kind and id of the web file.' });
+        return copying(reply, () => webPreview(web, kind as LibraryKind, id));
+      });
+      // The folder it goes in is `folder` (checked to exist here, as for any request that names one).
+      r.post('/api/web/download', async (req, reply) => {
+        const { kind, id, title, format } = (req.body ?? {}) as { kind?: unknown; id?: unknown; title?: unknown; format?: unknown };
+        if (typeof id !== 'string' || !LIBRARY_KINDS.includes(kind as LibraryKind) || !DOWNLOAD_FORMATS.includes(format as DownloadFormat)) return reply.code(400).send({ error: 'Give the kind, id and format of the web file.' });
+        return copying(reply, () => downloadFromWeb(web, copyStores(req), { kind: kind as LibraryKind, id, title: typeof title === 'string' && title.trim() ? title.trim() : undefined }, req.folder, format as DownloadFormat));
+      });
+    }
 
     // The file the window shows ({kind, id}, or nothing): what the MCP tools act on when no id is given.
     r.post('/api/local/showing', async (req) => {

@@ -118,7 +118,22 @@ export interface RecentFile {
   app?: boolean;
 }
 
+/** A web file copied into the folder, or a folder's file copied to the web (desktop app; server/webCopy.ts). */
+export interface CopiedFile {
+  kind: 'doc' | 'deck' | 'sheet' | 'markdown' | 'file';
+  id: string;
+  title: string;
+  warnings: string[];
+}
+export type DownloadFormat = 'office' | 'native' | 'pdf' | 'csv' | 'as-is';
+
 export const api = {
+  // The person's account on the web, from the desktop app (through the Web tab's session).
+  webStatus: () => request<{ signedIn: boolean; email?: string }>('GET', '/api/web/status'),
+  webFolders: (path: string) => request<{ folders: FolderInfo[] }>('GET', `/api/web/folders?path=${encodeURIComponent(path)}`),
+  uploadToWeb: (id: string, webFolder: string) => request<CopiedFile>('POST', '/api/web/upload', { id, webFolder }),
+  webPreview: (kind: string, id: string) => request<{ formats: DownloadFormat[]; officeLosses: string[] }>('GET', `/api/web/preview?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`),
+  downloadFromWeb: (file: { kind: string; id: string; title?: string }, folder: string, format: DownloadFormat) => request<CopiedFile>('POST', '/api/web/download', { ...file, folder, format }),
   /** What is in a folder ('' is the top): its folders, documents of every kind and stored files. */
   library: (folder = '') => request<{ folder: string; folders: FolderInfo[]; docs: SheetMeta[]; files: StoredFile[] }>('GET', `/api/library${inFolder(folder, true)}`),
   /** A small picture of a document, for the thumbnail view. */

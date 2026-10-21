@@ -7,6 +7,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { buildApp } from '../server/app.ts';
 import { ElectronRenderer, type PdfAnswer } from '../server/pdf.ts';
+import { WebBridge, type WebAnswer } from '../server/webCopy.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const dir = process.env.LOCAL_DIR;
@@ -22,6 +23,10 @@ mkdirSync(dataDir, { recursive: true });
 const send = process.send?.bind(process);
 const pdf = send ? new ElectronRenderer((msg) => send(msg)) : undefined;
 if (pdf) process.on('message', (msg: Partial<PdfAnswer> | null) => typeof msg?.pdfDone === 'string' && pdf.answer(msg as PdfAnswer));
+// The person's account on the web, which the main process reaches with the Web tab's session (Upload to Web,
+// Download to Folder).
+const web = send ? new WebBridge((msg) => send(msg)) : undefined;
+if (web) process.on('message', (msg: Partial<WebAnswer> | null) => typeof msg?.webDone === 'string' && web.answer(msg as WebAnswer));
 const app = await buildApp({
   dataDir,
   staticDir: path.join(root, 'dist', 'client'),
@@ -34,6 +39,7 @@ const app = await buildApp({
     openFolder: (dir) => process.send?.({ openFolder: dir }),
     chooseFolder: () => process.send?.({ chooseFolder: true }),
     connectAgent: () => process.send?.({ connectAgent: true }),
+    web,
     // The MCP server for agents on this machine (MCP_TOKEN; MCP_URL is main.js's fixed port in front of it).
     // What the model opens is shown in the window, which main.js does.
     ...(process.env.MCP_TOKEN ? { mcp: { token: process.env.MCP_TOKEN, url: process.env.MCP_URL || undefined, show: (page: string) => process.send?.({ show: page }), changed: (id: string) => process.send?.({ fileChanged: id }) } } : {}),

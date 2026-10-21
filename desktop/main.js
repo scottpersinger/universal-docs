@@ -386,6 +386,7 @@ async function startServer(dir) {
     if (msg && typeof msg.show === 'string' && msg.show.startsWith('/')) showPage(msg.show, server);
     if (msg && typeof msg.fileChanged === 'string') fileChanged(msg.fileChanged, server);
     if (msg && typeof msg.pdf === 'string') void printPdf(msg).then((answer) => child.connected && child.send(answer));
+    if (msg && typeof msg.web === 'string') void webRequest(msg).then((answer) => child.connected && child.send(answer));
   });
   child.once('exit', () => {
     servers.delete(dir);
@@ -477,10 +478,30 @@ async function switchTo(kind, from) {
   createWindow(server, `${server.origin}/`, from).focus();
 }
 
+/**
+ * A folder's server asks the web something as the person signed in to the Web tab (server/webCopy.ts: Upload to
+ * Web, Download to Folder). Only the hosted app's API, and the server never sees the session.
+ */
+async function webRequest(req) {
+  try {
+    if (typeof req.path !== 'string' || !req.path.startsWith('/api/')) throw new Error('not a request the app passes on');
+    const res = await webSession.fetch(`${WEB_URL}${req.path}`, {
+      method: req.method,
+      credentials: 'include',
+      headers: { ...(req.type ? { 'content-type': req.type } : {}), ...(req.headers ?? {}) },
+      body: typeof req.data === 'string' ? Buffer.from(req.data, 'base64') : undefined,
+    });
+    const data = Buffer.from(await res.arrayBuffer());
+    return { webDone: req.web, status: res.status, type: (res.headers.get('content-type') ?? '').split(';')[0].trim(), disposition: res.headers.get('content-disposition') ?? '', data: data.toString('base64') };
+  } catch (e) {
+    return { webDone: req.web, error: `The web could not be reached: ${e?.message ?? e}` };
+  }
+}
+
 /** Sign out of the hosted app: its session ends there and here, and Web tabs go to the sign-in page. */
 async function signOutOfWeb() {
   try {
-    await webSession.fetch(`${WEB_URL}/api/auth/logout`, { method: 'POST' });
+    await webSession.fetch(`${WEB_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
   } catch {
     // Offline: the session is forgotten here all the same.
   }
@@ -501,6 +522,29 @@ function handleAppLink(link, from = null) {
   }
   const failed = (e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e));
   if (u.hostname === 'switch') return void switchTo(u.searchParams.get('to') === 'web' ? 'web' : 'local', from).catch(failed);
+  // Download to Folder… (a Web tab) or Download to MCP Docs (the hosted app in any browser): the download dialog
+  // in a Local tab (client/src/components/WebCopyDialogs.tsx).
+  if (u.hostname === 'download') {
+    const id = u.searchParams.get('id') ?? '';
+    const kind = u.searchParams.get('kind') ?? '';
+    if (!/^[0-9a-z-]{1,64}$/i.test(id) || !['doc', 'deck', 'sheet', 'markdown', 'file'].includes(kind)) return;
+    const page = `/?${new URLSearchParams({ webDownload: id, kind, title: (u.searchParams.get('title') ?? '').slice(0, 200) })}`;
+    const server = frontServer();
+    if (server) return showPage(page, server);
+    return void serverFor(lastFolder() ?? app.getPath('home'))
+      .then((s) => createWindow(s, `${s.origin}${page}`, front).focus())
+      .catch(failed);
+  }
+  // A web file the person just uploaded, in a Web tab.
+  if (u.hostname === 'open-web') {
+    const page = u.searchParams.get('path') ?? '/';
+    if (!page.startsWith('/') || page.startsWith('//')) return;
+    const win = lastWindow(isWeb);
+    if (!win) return void createWebWindow(`${WEB_URL}${page}`, from).focus();
+    void win.loadURL(`${WEB_URL}${page}`);
+    win.focus();
+    return;
+  }
   if (u.hostname === 'signed-in') {
     const code = u.searchParams.get('code');
     if (!code) return;

@@ -21,7 +21,8 @@ import { csvTitle } from '../../../shared/csv.ts';
 import { cleanFolderPath, folderTrail } from '../../../shared/folders.ts';
 import { markdownTitle } from '../../../shared/markdown.ts';
 import { appName } from '../brand.ts';
-import { PlaceSwitch } from '../components/PlaceSwitch.tsx';
+import { inDesktopApp, PlaceSwitch } from '../components/PlaceSwitch.tsx';
+import { downloadLink, DownloadFromWebDialog, pathOfFile, UploadToWebDialog } from '../components/WebCopyDialogs.tsx';
 import { downloadPdf } from '../print.ts';
 
 const pathOf = (s: LibraryItem) => (s.kind === 'deck' ? `/d/${s.id}` : s.kind === 'doc' ? `/doc/${s.id}` : s.kind === 'markdown' ? `/md/${s.id}` : s.kind === 'file' ? `/f/${s.id}` : `/s/${s.id}`);
@@ -141,6 +142,19 @@ export function HomePage() {
   const [listed, setListed] = useState<string | null>(null);
   const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [moving, setMoving] = useState<LibraryItem | null>(null);
+  const [uploading, setUploading] = useState<LibraryItem | null>(null);
+  // A web file to download into the folder (desktop app): the app opens the home page with it.
+  const webKind = (['doc', 'deck', 'sheet', 'markdown', 'file'] as const).find((k) => k === params.get('kind'));
+  const webDownload = local && params.get('webDownload') && webKind ? { id: params.get('webDownload')!, kind: webKind, title: params.get('title') ?? '' } : null;
+  const closeWebDownload = () =>
+    setParams(
+      (cur) => {
+        const next = new URLSearchParams(cur);
+        for (const k of ['webDownload', 'kind', 'title']) next.delete(k);
+        return next;
+      },
+      { replace: true },
+    );
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const [branching, setBranching] = useState<LibraryItem | null>(null);
@@ -487,6 +501,10 @@ export function HomePage() {
           ? [{ label: 'Convert to Markdown', onClick: () => api.pdfToMarkdown(s.id).then(({ doc, warnings }) => navigate(`/md/${doc.id}`, { state: { importWarnings: warnings } }), (e: Error) => setError(e.message)) }]
           : []),
         { label: 'Move to…', onClick: () => setMoving(s) },
+        // Copies between the folder and the web (desktop app): from a folder here, from the web to a folder.
+        ...(local
+          ? [{ label: 'Upload to Web…', onClick: () => setUploading(s) }]
+          : [{ label: inDesktopApp() ? 'Download to Folder…' : 'Download to MCP Docs', onClick: () => void (window.location.href = downloadLink(s)) }]),
       ]}
       onRename={async (s, title) => {
         await (s.kind === 'file' ? api.renameFile(s.id, title) : s.kind === 'deck' ? api.renameDeck(s.id, title) : s.kind === 'doc' ? api.renameDoc(s.id, title) : s.kind === 'markdown' ? api.renameMarkdown(s.id, title) : api.renameSheet(s.id, title));
@@ -543,6 +561,16 @@ export function HomePage() {
             await load();
           }}
           onClose={() => setMoving(null)}
+        />
+      )}
+      {uploading && <UploadToWebDialog file={uploading} onClose={() => setUploading(null)} />}
+      {webDownload && local && (
+        <DownloadFromWebDialog
+          file={webDownload}
+          rootName={dirName(local.dir)}
+          startIn={folder}
+          onDone={(made) => navigate(pathOfFile(made.kind, made.id))}
+          onClose={closeWebDownload}
         />
       )}
       {branching && (

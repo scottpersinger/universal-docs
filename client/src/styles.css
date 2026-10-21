@@ -1628,6 +1628,40 @@ textarea {
   display: flex;
   height: 100%;
 }
+/* Copying between the folder and the web (components/WebCopyDialogs.tsx). */
+.copy-formats {
+  border: 0;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.copy-formats legend {
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.copy-formats label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.copy-formats label > span {
+  display: flex;
+  flex-direction: column;
+}
+.copy-formats .muted {
+  font-size: 12px;
+}
+.copy-loss {
+  color: #b06000 !important;
+}
+.copy-warnings {
+  margin: 8px 0;
+  padding-left: 20px;
+  color: #b06000;
+}
 /* Local | Web beside the logo in the desktop app (components/PlaceSwitch.tsx). */
 .place-switch {
   display: inline-flex;
