@@ -122,6 +122,8 @@ export function toolLabel(name: string, i: Input): string {
     }
     case 'convert_pdf':
       return 'Made a Markdown copy of a PDF';
+    case 'export_pdf':
+      return 'Made a PDF';
     case 'read_file':
       return i.offset ? 'Read more of a file' : 'Read a file';
     case 'render_slide':

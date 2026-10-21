@@ -12,6 +12,7 @@ import { AgentStore, type Driver, type MessageParam, type Pending } from './stor
 import { AgentNotFoundError, type ClaudeAgentDriver } from './claudeAgent.ts';
 import type { FileStore } from '../files.ts';
 import type { ImageStore } from '../images.ts';
+import type { PdfMaker } from '../pdf.ts';
 import { runServerTool, TOOL_DEFS, TOOL_DEFS_WITHOUT_JOBS, ToolFailure, validateToolInput } from './tools.ts';
 
 type Message = Anthropic.Beta.BetaMessage;
@@ -39,6 +40,8 @@ export interface AgentOptions {
   /** Where import_file puts pictures and stored files. */
   images?: ImageStore;
   files?: FileStore;
+  /** Makes PDFs of files, for export_pdf (server/pdf.ts). */
+  pdf?: PdfMaker;
   /** Whether the assistant can file background jobs (app changes, research); the desktop app cannot. Default true. */
   jobs?: boolean;
   /** Runs the turns of a user who chose their own Claude Code (the desktop app; claudeAgent.ts). */
@@ -69,6 +72,7 @@ export class AgentService {
   private dailyLimit: number;
   private images: ImageStore | undefined;
   private files: FileStore | undefined;
+  private pdf: PdfMaker | undefined;
   private jobs: boolean;
   private claudeAgent: ClaudeAgentDriver | null;
   /** Users with a turn in progress (one at a time per user). */
@@ -82,6 +86,7 @@ export class AgentService {
     this.ownModel = opts.ownModel ?? ownModel;
     this.images = opts.images;
     this.files = opts.files;
+    this.pdf = opts.pdf;
     this.jobs = opts.jobs ?? true;
     this.claudeAgent = opts.claudeAgent ?? null;
     this.dailyLimit = opts.dailyRequestLimit ?? Number(process.env.AGENT_DAILY_REQUEST_LIMIT ?? 500);
@@ -185,7 +190,7 @@ export class AgentService {
     this.store.append(conv.id, { role: 'user', content });
     this.store.setPending(conv.id, null);
 
-    const env = { userId, sheets: this.sheets, images: this.images, files: this.files, context: req.context };
+    const env = { userId, sheets: this.sheets, images: this.images, files: this.files, pdf: this.pdf, context: req.context };
     // The user's own key and model when they set one in Settings; otherwise the server's model.
     const own = this.settings.choice(userId);
     if (!own && !this.settings.builtIn) throw new AgentError(400, 'Choose what the assistant runs on in Settings: add your Anthropic, OpenAI or OpenRouter API key.');

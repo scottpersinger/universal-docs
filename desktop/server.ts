@@ -6,6 +6,7 @@ import '../server/env.ts';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { buildApp } from '../server/app.ts';
+import { ElectronRenderer, type PdfAnswer } from '../server/pdf.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const dir = process.env.LOCAL_DIR;
@@ -16,6 +17,11 @@ delete process.env.APP_URL;
 delete process.env.LEGACY_HOSTS;
 
 mkdirSync(dataDir, { recursive: true });
+// PDFs are printed by the app's main process in a hidden window (Electron is a browser already); run on its
+// own, the server uses Playwright's Chromium as the hosted app does.
+const send = process.send?.bind(process);
+const pdf = send ? new ElectronRenderer((msg) => send(msg)) : undefined;
+if (pdf) process.on('message', (msg: Partial<PdfAnswer> | null) => typeof msg?.pdfDone === 'string' && pdf.answer(msg as PdfAnswer));
 const app = await buildApp({
   dataDir,
   staticDir: path.join(root, 'dist', 'client'),
@@ -37,6 +43,7 @@ const app = await buildApp({
     env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, OPENAI_API_KEY: process.env.OPENAI_API_KEY, OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY },
   },
   blob: null,
+  pdf,
 });
 // Loopback only, on a port the system picks unless one is given.
 await app.listen({ port: Number(process.env.PORT ?? 0), host: '127.0.0.1' });

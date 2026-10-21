@@ -14,6 +14,7 @@ import type { DB } from './db.ts';
 import type { FileStore } from './files.ts';
 import type { Folders } from './folders.ts';
 import type { ImageStore } from './images.ts';
+import type { PdfMaker } from './pdf.ts';
 import type { SheetStore } from './sheets.ts';
 
 export interface LocalMcpOptions {
@@ -35,6 +36,8 @@ export interface LocalMcpOptions {
   changed?(id: string): void;
   /** The windows, where the edit tools run on a file open in one (windowTools.ts). */
   live?: LiveEditor | null;
+  /** Makes PDFs of files (pdf.ts), for export_pdf. */
+  pdf?: PdfMaker;
 }
 
 /** The app's address of a file. */
@@ -51,7 +54,7 @@ function bearerMatches(header: string | undefined, token: string): boolean {
 
 /** Serve /mcp (and the plugin's upload and file links) from the app; returns the local user's file service. */
 export async function mountLocalMcp(app: FastifyInstance, opts: LocalMcpOptions): Promise<FileService> {
-  const hub = new FileHub({ db: opts.db, dataDir: opts.dataDir, publicUrl: opts.publicUrl, sheets: opts.sheets, images: opts.images, files: opts.files, folders: opts.folders });
+  const hub = new FileHub({ db: opts.db, dataDir: opts.dataDir, publicUrl: opts.publicUrl, sheets: opts.sheets, images: opts.images, files: opts.files, folders: opts.folders, pdf: opts.pdf });
   hub.onShow = (_userId, file) => opts.show(pathOfFile(file.kind, file.id));
   hub.onFileChanged = (_userId, id) => opts.changed?.(id);
   hub.live = opts.live ?? null;

@@ -40,6 +40,7 @@ import { checkDocxFile, pickDocxFile } from '../importFile.ts';
 import { useDocFonts } from '../doc/fonts.ts';
 import { useFavicon } from '../favicon.ts';
 import { appName } from '../brand.ts';
+import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
 
 function downloadFile(name: string, mime: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -222,6 +223,18 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
+
+  /** File › Download as PDF: saved first, then made by the server (print.ts). */
+  const exportPdf = async () => {
+    notify('Making the PDF…');
+    try {
+      await ctl.saver.flush();
+      await downloadPdf(meta.id);
+      notify('Downloaded.');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e));
+    }
+  };
   const office = useOfficeFile({
     meta,
     initialNotKept,
@@ -318,9 +331,17 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
     };
   }, [ctl, openLinkDialog]);
 
-  // Print: in Pages mode lay the pages out exactly as on screen, print, then go back to the editor.
+  // Print: in Pages mode lay the pages out exactly as on screen, print, then go back to the editor. Made into a
+  // PDF by the server (print.ts), the page is laid out once the fonts are in and says when it is drawn instead.
+  useEffect(() => {
+    if (!printingPdf()) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    void document.fonts.ready.then(() => (t = setTimeout(() => setPrinting(true), 50)));
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => {
     if (!printing) return;
+    if (printingPdf()) return void signalPrintReady();
     const done = () => setPrinting(false);
     window.addEventListener('afterprint', done);
     const t = setTimeout(() => window.print(), 80);
@@ -363,6 +384,7 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
         'sep',
         { label: 'Download as Markdown (.md)', action: () => downloadFile(`${meta.title}.md`, 'text/markdown', docToMarkdown(ctl.doc)) },
         { label: 'Download as web page (.html)', action: () => downloadFile(`${meta.title}.html`, 'text/html', docToHtml(ctl, meta.title)) },
+        { label: 'Download as PDF', action: () => void exportPdf() },
         { label: 'Print / Save as PDF…', shortcut: `${MOD}P`, action: () => setPrinting(true) },
         'sep',
         { label: 'Delete document', danger: true, action: () => setDialog({ kind: 'delete' }) },

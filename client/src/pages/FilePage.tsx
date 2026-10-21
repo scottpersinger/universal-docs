@@ -21,6 +21,7 @@ import { HomeIcon } from '../components/Logo.tsx';
 import { useFavicon } from '../favicon.ts';
 import { isPowerPointFile, isWordFile, titleFromFileName } from '../importFile.ts';
 import { appName } from '../brand.ts';
+import { downloadPdf } from '../print.ts';
 
 // Remove background in the image editor: a model that runs in the browser, fetched when it is first used.
 const loadBackgroundRemoval = () => import('@imgly/background-removal');
@@ -40,6 +41,7 @@ export function FilePage() {
   const [file, setFile] = useState<StoredFile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [converting, setConverting] = useState(false);
+  const [makingPdf, setMakingPdf] = useState(false);
   const navigate = useNavigate();
   // `?edit=1` (the assistant putting a picture on top of this one) opens the editor at once.
   const [params, setParams] = useSearchParams();
@@ -152,6 +154,21 @@ export function FilePage() {
           {file?.type === HTML_TYPE && (
             <button className={`btn${editing ? ' active' : ''}`} onClick={() => setEditing(!editing)} title={editing ? 'Run the page as a browser would, with its scripts and links working' : "Select, edit, delete and recolor the page's elements"}>
               {editing ? 'Preview' : 'Edit'}
+            </button>
+          )}
+          {file?.type === HTML_TYPE && !editing && (
+            <button
+              className="btn"
+              disabled={makingPdf}
+              onClick={() => {
+                setMakingPdf(true);
+                downloadPdf(file.id)
+                  .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setMakingPdf(false));
+              }}
+              title="Download the page as a PDF, as a browser prints it"
+            >
+              {makingPdf ? 'Making PDF…' : 'Download as PDF'}
             </button>
           )}
           {json && (

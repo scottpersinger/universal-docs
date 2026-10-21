@@ -14,6 +14,7 @@ import type { SheetStore } from '../../server/sheets.ts';
 import { FileHub } from './files.ts';
 import { createPluginHandler } from './http.ts';
 import { OAuthServer } from './oauth.ts';
+import type { PdfMaker } from '../../server/pdf.ts';
 
 export interface MountOptions {
   db: DB;
@@ -22,6 +23,8 @@ export interface MountOptions {
   images: ImageStore;
   /** The app's stored files (PDFs, videos), which the plugin lists and shows too. */
   files?: FileStore;
+  /** Makes PDFs of files (server/pdf.ts), for export_pdf. */
+  pdf?: PdfMaker;
   auth: AuthService;
   google: GoogleLogin | null;
   /** The app's mailer and its limit on emails per address, for accounts created on the plugin's sign-in page. */
@@ -39,7 +42,7 @@ export interface MountOptions {
 /** Returns the OAuth server, for the app's Settings page (the agents connected with a device code). */
 export async function mountPlugin(app: FastifyInstance, opts: MountOptions): Promise<OAuthServer> {
   const publicUrl = opts.publicUrl.replace(/\/$/, '');
-  const hub = new FileHub({ db: opts.db, dataDir: opts.dataDir, publicUrl, sheets: opts.sheets, images: opts.images, files: opts.files });
+  const hub = new FileHub({ db: opts.db, dataDir: opts.dataDir, publicUrl, sheets: opts.sheets, images: opts.images, files: opts.files, pdf: opts.pdf });
   const oauth = new OAuthServer({
     db: new DatabaseSync(path.join(opts.dataDir, 'plugin.db')),
     issuer: publicUrl,

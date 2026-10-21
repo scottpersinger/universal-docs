@@ -24,6 +24,7 @@ import { findAll, stepIndex, useFind } from '../find/find.ts';
 import { clearMatches, paintMatches, rangesIn } from '../find/highlights.ts';
 import { TextareaMatches } from '../markdown/TextareaMatches.tsx';
 import { appName } from '../brand.ts';
+import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
 
 // Diagrams in the preview: Mermaid is fetched when a document first has one.
 const loadMermaid = () => import('mermaid');
@@ -135,7 +136,11 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [showPreview, setShowPreviewState] = useState(loadShowPreview);
+  // Made into a PDF by the server (print.ts), the preview is what prints, so it is shown.
+  const [showPreview, setShowPreviewState] = useState(() => printingPdf() || loadShowPreview());
+  useEffect(() => {
+    if (printingPdf()) void signalPrintReady();
+  }, []);
   const setShowPreview = (v: boolean) => {
     setShowPreviewState(v);
     try {
@@ -213,6 +218,18 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
+
+  /** File › Download as PDF: saved first, then made by the server (print.ts). */
+  const exportPdf = async () => {
+    notify('Making the PDF…');
+    try {
+      await ctl.saver.flush();
+      await downloadPdf(meta.id);
+      notify('Downloaded.');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e));
+    }
+  };
   // The file was saved somewhere else (another tab, the ChatGPT plugin) and the editor took that version.
   useEffect(
     () =>
@@ -272,6 +289,7 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
         { label: 'Import Markdown file…', action: () => void importMarkdownFile() },
         'sep',
         { label: 'Download (.md)', action: () => downloadFile(`${meta.title}.md`, 'text/markdown', ctl.text) },
+        { label: 'Download as PDF', action: () => void exportPdf() },
         'sep',
         { label: 'Delete document', danger: true, action: () => setDialog({ kind: 'delete' }) },
         'sep',

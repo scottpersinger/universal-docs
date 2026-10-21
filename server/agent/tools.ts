@@ -20,6 +20,7 @@ import type { FileStore } from '../files.ts';
 import type { ImageStore } from '../images.ts';
 import { importBytes, ImportFileError, importLimit, webImportName } from '../importFile.ts';
 import { PdfError, pdfToMarkdownFile } from '../pdfMarkdown.ts';
+import { PrintError, type PdfMaker } from '../pdf.ts';
 import { STORED_IMAGE_RE } from '../../shared/types.ts';
 import type { SheetStore } from '../sheets.ts';
 import { fetchPublicFile, WebFetchError } from '../webFetch.ts';
@@ -388,6 +389,14 @@ export const schemas = {
     .describe(
       "Make a Markdown document of a stored PDF's text, next to the PDF (same folder, same name); the PDF does not change. Headings, lists, tables and links are kept, pictures are left out, and scanned pages are read with OCR. Use it when the user wants a PDF as Markdown or as text they can edit, or when you need to read a PDF: then read_doc on the new document. Returns doc_id; open_doc opens it.",
     ),
+  export_pdf: z
+    .object({
+      file_id: z.string().optional().describe('The document, presentation, Markdown document or stored web page (.html). Defaults to the file the user has open.'),
+      paper: z.enum(['letter', 'a4']).optional().describe("Paper size for pages that do not set their own (Markdown, web pages; documents and presentations keep their page setup). Defaults to letter; use a4 when the user is outside North America."),
+    })
+    .describe(
+      'Make a PDF of a document, presentation, Markdown document or stored web page, and keep it as a stored file next to it (same folder, same name with .pdf). The PDF is what Print makes: documents with their page setup, one slide per page, Markdown as its preview with diagrams drawn. The original does not change. Spreadsheets cannot be made into PDFs. Returns file_id; open_file shows it.',
+    ),
   edit_file: z
     .object({
       file_id: z.string(),
@@ -745,6 +754,8 @@ export interface ServerToolEnv {
   /** Where imported pictures and files go; without them import_file is not available. */
   images?: ImageStore;
   files?: FileStore;
+  /** Makes PDFs of files (server/pdf.ts); without it export_pdf is not available. */
+  pdf?: PdfMaker;
   context: AgentContext;
 }
 
@@ -895,6 +906,21 @@ export async function runServerTool(name: string, input: Record<string, unknown>
         });
       } catch (e) {
         if (e instanceof PdfError) throw new ToolFailure(e.message);
+        throw e;
+      }
+    }
+    case 'export_pdf': {
+      if (!env.pdf) throw new ToolFailure('PDFs cannot be made here.');
+      const c = env.context;
+      const open = c.page === 'doc' || c.page === 'markdown' ? c.docId : c.page === 'deck' ? c.deckId : c.page === 'file' ? c.fileId : null;
+      const id = typeof input.file_id === 'string' && input.file_id ? input.file_id : open;
+      if (!id) throw new ToolFailure('Give file_id: the user has no file open. Find ids with list_docs, list_decks or list_files.');
+      try {
+        const file = await env.pdf.save(env.userId, id, input.paper === 'a4' ? 'a4' : 'letter');
+        if (!file) throw new ToolFailure(`There is no file ${id}.`);
+        return JSON.stringify({ made: true, file_id: file.id, name: file.filename, folder: file.folder ?? '', size: file.size, note: 'A new PDF next to the file. open_file shows it to the user.' });
+      } catch (e) {
+        if (e instanceof PrintError) throw new ToolFailure(e.message);
         throw e;
       }
     }

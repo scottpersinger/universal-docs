@@ -66,6 +66,7 @@ on disk: the tools keep the formatting, show the change in the app, and are undo
   rows, columns and tabs. A CSV file holds only plain values: formatting or more tabs need it converted,
   which the tool will say; ask the person first.
 - **PDFs:** read their text with `read_doc`, or make an editable Markdown copy with `convert_pdf_to_markdown`.
+- **Making a PDF:** `export_pdf` makes a PDF of a document, presentation, Markdown file or web page, next to it, as the app prints it.
 - **Pictures** (PNG, JPEG, WebP): look at one with `view_image`; crop, rotate, resize, adjust, annotate,
   redact or remove the background (`remove_background`) with `transform_image`, which saves a new file
   unless you ask to replace the original. The app's window does the editing, so it must be open.

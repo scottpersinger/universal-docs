@@ -729,6 +729,29 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
         }),
     );
 
+  if (version >= 2 && service.hub.pdf)
+    server.registerTool(
+      'export_pdf',
+      {
+        title: 'Make a PDF',
+        description:
+          'Make a PDF of a document, presentation, Markdown document or stored web page (.html), keep it as a stored file next to it (same folder, same name with .pdf), and show it in the app. The PDF is what the app prints: documents with their page setup, one slide per page, Markdown as its preview with diagrams drawn. The original does not change. Spreadsheets cannot be made into PDFs. read_file returns the PDF\'s bytes.',
+        inputSchema: {
+          file_id: fileId.optional().describe('The document, presentation, Markdown document or web page. Defaults to the file open in the app.'),
+          paper: z.enum(['letter', 'a4']).optional().describe('Paper size for pages that do not set their own (Markdown, web pages). Defaults to letter; use a4 when the user is outside North America.'),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      },
+      async ({ file_id, paper }) =>
+        guard(async () => {
+          const id = file_id ?? service.open?.id;
+          if (!id) throw new ToolError('Give file_id: no file is open in the app. Use list_files or search_files to find ids.');
+          const file = await service.exportPdf(id, paper ?? 'letter');
+          service.show({ kind: 'file', id: file.id });
+          return ok({ file, ...service.state() });
+        }),
+    );
+
   // One edit of a picture, said as what the picture should become: each change is a field of its own, typed for
   // what it takes. (The app's assistant gives a list of operations instead; this is turned into one.)
   const px = (what: string) => z.number().describe(what);

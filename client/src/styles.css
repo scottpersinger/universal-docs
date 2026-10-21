@@ -2873,10 +2873,6 @@ button.agent-tool-label:hover {
   overflow: hidden;
 }
 @media print {
-  @page {
-    size: 10in 5.625in;
-    margin: 0;
-  }
   html,
   body,
   #root,
@@ -3366,8 +3362,13 @@ button.agent-tool-label:hover {
   .doc-page .wb-header,
   .doc-page .toolbar,
   .doc-page .toast,
+  .doc-page .doc-thumbs-col,
+  .doc-page .deck-thumbs-resize,
   .app-shell .agent-panel {
     display: none !important;
+  }
+  .doc-body-row {
+    margin: 0;
   }
   .doc-page,
   .doc-body {
@@ -3559,7 +3560,7 @@ button.agent-tool-label:hover {
 @media print {
   .doc-printing-pages .wb-header,
   .doc-printing-pages .toolbar,
-  .doc-printing-pages .doc-body,
+  .doc-printing-pages .doc-body-row,
   .doc-printing-pages .import-banner {
     display: none !important;
   }
@@ -4573,10 +4574,28 @@ button.agent-tool-label:hover {
   .md-page .md-preview-resize {
     display: none !important;
   }
+  .md-page {
+    background: #fff;
+  }
+  .md-page .md-body-row {
+    margin: 0;
+  }
   .md-page .md-preview {
+    flex: 1 1 auto;
     width: auto !important;
     border: 0;
+    border-radius: 0;
     overflow: visible;
+  }
+  /* Code, diagrams, pictures and table rows stay whole; a heading stays with what follows it. */
+  .md-page .md-preview pre,
+  .md-page .md-preview .md-mermaid,
+  .md-page .md-preview img,
+  .md-page .md-preview tr {
+    break-inside: avoid;
+  }
+  .md-page .md-preview :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
   }
 }
 

@@ -43,6 +43,7 @@ import { SlideView } from '../deck/SlideView.tsx';
 import { ThumbnailStrip } from '../deck/ThumbnailStrip.tsx';
 import { SLIDE_TRAY } from '../panelSize.ts';
 import { appName } from '../brand.ts';
+import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
 
 /** Natural size of an image, for sizing a new image element. */
 function imageSize(src: string): Promise<{ w: number; h: number } | undefined> {
@@ -161,7 +162,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   // A right-click menu: a slide's (on its thumbnail, `index`) or the selected elements' (on the slide).
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; index?: number } | null>(null);
   const [showNotes, setShowNotes] = useState(true);
-  const [printing, setPrinting] = useState(false);
+  // Made into a PDF by the server (print.ts), the page starts laid out for printing.
+  const [printing, setPrinting] = useState(printingPdf);
   const [, setSaveTick] = useState(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The thumbnail tray shares the body with the canvas (less the 8px gap between them).
@@ -193,6 +195,18 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }, []);
+
+  /** File › Download as PDF: saved first, then made by the server (print.ts). */
+  const exportPdf = async () => {
+    notify('Making the PDF…');
+    try {
+      await ctl.saver.flush();
+      await downloadPdf(meta.id);
+      notify('Downloaded.');
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e));
+    }
+  };
   const office = useOfficeFile({
     meta,
     initialNotKept,
@@ -434,6 +448,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
   // Print: lay every slide out on its own page, print, then go back to the editor.
   useEffect(() => {
     if (!printing) return;
+    if (printingPdf()) return void signalPrintReady();
     const done = () => setPrinting(false);
     window.addEventListener('afterprint', done);
     const t = setTimeout(() => window.print(), 50);
@@ -473,6 +488,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         { label: 'Import PowerPoint slides…', action: () => void importPptxSlides() },
         'sep',
         { label: 'Download as PowerPoint (.pptx)', action: () => void exportPptx() },
+        { label: 'Download as PDF', action: () => void exportPdf() },
         { label: 'Print / Save as PDF…', shortcut: `${MOD}P`, action: () => setPrinting(true) },
         { label: 'Download as JSON', action: () => downloadFile(`${meta.title}.json`, 'application/json', JSON.stringify(ctl.deck, null, 2)) },
         'sep',
@@ -677,6 +693,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
 
       {printing && (
         <div className="deck-print">
+          {/* The page is a slide's size; only while printing a presentation, so other pages keep theirs. */}
+          <style>{'@page { size: 10in 5.625in; margin: 0; }'}</style>
           {ctl.deck.slides.map((s) => (
             <div key={s.id} className="deck-print-page">
               <SlideView slide={s} theme={ctl.deck.theme} scale={1} />

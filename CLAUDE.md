@@ -172,6 +172,15 @@ type stripping; imports use `.ts` extensions.
   `read_doc` on a stored PDF reads it, and Convert to Markdown (the PDF's page and its menu in the list,
   `POST /api/files/:id/markdown`), the assistant's `convert_pdf` and the MCP `convert_pdf_to_markdown` (version 2)
   make a Markdown file of it beside the PDF (`pdfToMarkdownFile`).
+- Download as PDF (documents, presentations, Markdown, stored web pages; design in `docs/web-and-pdf.md`) is made by
+  the server: `GET /api/files/:id/export?format=pdf` has a `PdfRenderer` (`server/pdf.ts`) load the file's page in
+  the app with `?print=pdf`, which lays itself out as File › Print does and sets `window.__printReady` when drawn
+  (`client/src/print.ts`), and print it. The headless browser is let in by a print ticket, a cookie making its
+  requests the user's for reading only (`PrintTickets`, the `onRequest` hook). A web page's HTML is printed
+  from its text with each request it makes checked as an import's (`webFetch.ts`). The hosted app's renderer is
+  Chromium through `playwright-core` (`CHROMIUM_PATH`, Debian's `chromium` on Railway); the desktop app's
+  (`ElectronRenderer`) asks `main.js` to print in a hidden window (`printPdf`). `PdfMaker` (made once in `buildApp`)
+  also serves `export_pdf`, for the assistant and the MCP, which keeps the PDF as a stored file beside the file.
 - A PDF is signed on its page (Edit, `client/src/pdf/PdfSigner.tsx`): the pages drawn by pdf.js with the user's
   signature, lines of text and dates placed over them, which `signPdf` (`shared/pdfSign.ts`, on `@cantoo/pdf-lib`)
   writes into the page content (Helvetica text, the signature as a picture; positions in points from the top left of

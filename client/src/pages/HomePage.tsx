@@ -21,6 +21,7 @@ import { csvTitle } from '../../../shared/csv.ts';
 import { cleanFolderPath, folderTrail } from '../../../shared/folders.ts';
 import { markdownTitle } from '../../../shared/markdown.ts';
 import { appName } from '../brand.ts';
+import { downloadPdf } from '../print.ts';
 
 const pathOf = (s: LibraryItem) => (s.kind === 'deck' ? `/d/${s.id}` : s.kind === 'doc' ? `/doc/${s.id}` : s.kind === 'markdown' ? `/md/${s.id}` : s.kind === 'file' ? `/f/${s.id}` : `/s/${s.id}`);
 
@@ -476,6 +477,9 @@ export function HomePage() {
           onClick: () => window.location.assign(s.kind === 'file' ? `/api/files/${s.id}/download` : `/api/files/${s.id}/export`),
         },
         ...(s.kind === 'sheet' && s.format !== 'csv' ? [{ label: 'Download as CSV', onClick: () => window.location.assign(`/api/files/${s.id}/export?format=csv`) }] : []),
+        ...(s.kind === 'doc' || s.kind === 'deck' || s.kind === 'markdown' || (s.kind === 'file' && /\.html?$/i.test(s.title))
+          ? [{ label: 'Download as PDF', onClick: () => void downloadPdf(s.id).catch((e: Error) => setError(e.message)) }]
+          : []),
         ...(s.kind === 'sheet' ? [{ label: 'Create branch', onClick: () => setBranching(s) }] : []),
         ...(s.kind === 'file' && /\.pdf$/i.test(s.title)
           ? [{ label: 'Convert to Markdown', onClick: () => api.pdfToMarkdown(s.id).then(({ doc, warnings }) => navigate(`/md/${doc.id}`, { state: { importWarnings: warnings } }), (e: Error) => setError(e.message)) }]

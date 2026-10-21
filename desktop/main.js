@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { contextMenuTemplate } from './contextMenu.js';
 import { LocalOAuth } from './mcpAuth.js';
 
@@ -248,6 +249,57 @@ async function connectAgent() {
   if (agents.length && res.response === 1) mcpAuth.revokeAll();
 }
 
+// --- PDFs (server/pdf.ts) ------------------------------------------------------------------------------------
+// A folder's server asks for the PDF of a page of the app (with a print ticket as its cookie, which lets the
+// page read the file) or of a stored web page's HTML. It is printed in a hidden window with a session of its
+// own, thrown away after.
+
+/** Wait for the page to say it is drawn (client/src/print.ts). */
+async function printReady(win, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await win.webContents.executeJavaScript('window.__printReady === true')) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('the page took too long to draw');
+}
+
+async function printPdf(req) {
+  const ses = session.fromPartition(`pdf-${randomBytes(8).toString('hex')}`);
+  const win = new BrowserWindow({ show: false, width: 1200, height: 900, webPreferences: { session: ses, backgroundThrottling: false } });
+  let page = null;
+  try {
+    if (req.url) {
+      await ses.cookies.set({ url: new URL(req.url).origin, name: req.ticket.name, value: req.ticket.value, httpOnly: true });
+      await win.loadURL(req.url);
+      await printReady(win, req.opts.timeoutMs);
+    } else {
+      // A stored web page is someone else's HTML: here nothing it asks for is fetched (the hosted app fetches
+      // public addresses for it), so it shows only what it holds.
+      page = path.join(app.getPath('temp'), `mcp-docs-print-${randomBytes(8).toString('hex')}.html`);
+      writeFileSync(page, req.html);
+      const address = pathToFileURL(page).href;
+      ses.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !(details.url === address || /^(data|blob):/i.test(details.url)) }));
+      await win.loadURL(address);
+    }
+    const m = req.opts.margin;
+    const data = await win.webContents.printToPDF({
+      pageSize: req.opts.paper === 'letter' ? 'Letter' : 'A4',
+      preferCSSPageSize: true,
+      printBackground: true,
+      margins: { top: m, bottom: m, left: m, right: m },
+      generateDocumentOutline: true,
+      generateTaggedPDF: true,
+    });
+    return { pdfDone: req.pdf, data: data.toString('base64') };
+  } catch (e) {
+    return { pdfDone: req.pdf, error: `The PDF could not be made: ${e?.message ?? e}` };
+  } finally {
+    win.destroy();
+    if (page) rmSync(page, { force: true });
+  }
+}
+
 // --- The assistant's API keys ------------------------------------------------------------------------------
 // The app has no model of its own: the assistant runs on the user's Anthropic, OpenAI or OpenRouter key. On
 // the first run a key already set where the user works is used (the server keeps it once it has settings,
@@ -315,6 +367,7 @@ async function startServer(dir) {
     if (msg?.connectAgent) void connectAgent().catch(failed);
     if (msg && typeof msg.show === 'string' && msg.show.startsWith('/')) showPage(msg.show, server);
     if (msg && typeof msg.fileChanged === 'string') fileChanged(msg.fileChanged, server);
+    if (msg && typeof msg.pdf === 'string') void printPdf(msg).then((answer) => child.connected && child.send(answer));
   });
   child.once('exit', () => {
     servers.delete(dir);

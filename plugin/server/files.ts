@@ -32,6 +32,7 @@ import { open } from 'node:fs/promises';
 import { importBytes, ImportFileError } from '../../server/importFile.ts';
 import { NoTextError, storedFileText, textOutline } from '../../server/storedText.ts';
 import { PdfError, pdfToMarkdownFile } from '../../server/pdfMarkdown.ts';
+import { PrintError, type Paper, type PdfMaker } from '../../server/pdf.ts';
 import { applyTextEdits, TextEditError, type TextEdit } from '../../shared/textEdits.ts';
 import { readFile } from 'node:fs/promises';
 
@@ -167,6 +168,8 @@ export interface FileHubOptions {
   images?: ImageStore;
   files?: FileStore;
   folders?: Folders;
+  /** Makes PDFs of files, when the plugin runs inside the app (server/pdf.ts); without it there is no export_pdf. */
+  pdf?: PdfMaker;
 }
 
 /** Tools the model may run on a document, in the app's vocabulary. */
@@ -259,6 +262,7 @@ export class FileHub {
   readonly images: ImageStore;
   readonly files: FileStore;
   readonly folders: Folders;
+  readonly pdf: PdfMaker | null;
   readonly publicUrl: string | null;
   private readonly byUser = new Map<string, FileService>();
   /**
@@ -281,6 +285,7 @@ export class FileHub {
     this.images = opts.images ?? new ImageStore(opts.db, path.join(opts.dataDir, 'images'));
     this.files = opts.files ?? new FileStore(opts.db, path.join(opts.dataDir, 'files'));
     this.folders = opts.folders ?? new FolderStore(opts.db);
+    this.pdf = opts.pdf ?? null;
     this.publicUrl = opts.publicUrl?.replace(/\/$/, '') ?? null;
   }
 
@@ -581,6 +586,19 @@ export class FileService {
       return { file: { ...summary(made.sheet), folder: made.sheet.folder ?? '' }, pdf: fileSummary(made.pdf), pages: made.pageCount, ocr_pages: made.ocrPages, warnings: made.warnings };
     } catch (e) {
       if (e instanceof PdfError) throw new ToolError(e.message);
+      throw e;
+    }
+  }
+
+  /** A PDF of a document, presentation, Markdown file or stored web page, kept beside it (server/pdf.ts). */
+  async exportPdf(id: string, paper: Paper): Promise<FileSummary & { folder: string }> {
+    if (!this.hub.pdf) throw new ToolError('PDFs cannot be made here.');
+    try {
+      const file = await this.hub.pdf.save(this.userId, id, paper);
+      if (!file) throw new ToolError(`There is no file ${id}. Use list_files or search_files to find ids.`);
+      return { ...fileSummary(file), folder: file.folder ?? '' };
+    } catch (e) {
+      if (e instanceof PrintError) throw new ToolError(e.message);
       throw e;
     }
   }

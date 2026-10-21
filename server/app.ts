@@ -59,6 +59,7 @@ import { ClaudeAgentDriver, type ClaudeAgentOptions } from './agent/claudeAgent.
 import { mountLocalMcp } from './localMcp.ts';
 import { MAX_OFFICE_ENTRY_BYTES, openZip, ZipError, zipEntries, zipEntryBytes, zipOfficeView } from './zipView.ts';
 import { isZipName } from '../shared/zip.ts';
+import { NotPrintableError, paperFor, PdfMaker, PlaywrightRenderer, PRINT_COOKIE, PrintError, type PdfRenderer } from './pdf.ts';
 
 const SESSION_COOKIE = 'sid';
 /** Carries the desktop app's per-launch token (see AppOptions.local). */
@@ -101,6 +102,11 @@ export interface AppOptions {
    * (comma-separated). Lets the app move to a new domain while old links keep working.
    */
   legacyHosts?: string[];
+  /**
+   * Makes PDFs (server/pdf.ts): Chromium through Playwright when not given; the desktop app passes its window's
+   * (ElectronRenderer); tests pass a fake; null has Download as PDF refused.
+   */
+  pdf?: PdfRenderer | null;
   /** Checks an assistant API key before it is saved in Settings. Tests pass a stub; the default asks the provider. */
   checkAssistantKey?: KeyCheck;
   /** Edits a picture for the assistant's edit_image. Tests pass a stub; the default asks OpenAI's image model. */
@@ -251,7 +257,21 @@ export async function buildApp(opts: AppOptions) {
       : undefined;
   const signatures = new SignatureStore(settingsDb);
   const assistantSettings = new AssistantSettingsStore(settingsDb, path.join(settingsDir, 'connector.key'), { builtIn: !opts.local, agents: !!claudeAgent });
-  const agent = new AgentService(new AgentStore(db), sheets, assistantSettings, { jobs: !opts.local, ...opts.agent, images, files: storedFiles, claudeAgent });
+  // PDFs of files (server/pdf.ts): Download as PDF, and export_pdf for the assistant and the MCP. The headless
+  // browser loads the app's pages from this server when it serves them, else (development) from Vite.
+  const pdfRenderer = opts.pdf === undefined ? new PlaywrightRenderer() : opts.pdf;
+  const pdfMaker = pdfRenderer
+    ? new PdfMaker({
+        renderer: pdfRenderer,
+        sheets,
+        files: storedFiles,
+        origin: () => {
+          const address = app.server.address();
+          return opts.staticDir ? `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}` : (process.env.PRINT_ORIGIN ?? 'http://localhost:5173');
+        },
+      })
+    : null;
+  const agent = new AgentService(new AgentStore(db), sheets, assistantSettings, { jobs: !opts.local, ...opts.agent, images, files: storedFiles, pdf: pdfMaker ?? undefined, claudeAgent });
   const jobs = new JobStore(db);
   const jobRunner = new JobRunner(jobs, opts.launchJob ?? workerLauncher(opts.dataDir));
   // A previous server process may have died (or been restarted by the job itself) with a job in flight.
@@ -259,7 +279,7 @@ export async function buildApp(opts: AppOptions) {
 
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 100 * 1024 * 1024, trustProxy: true });
   await app.register(cookie);
-  const pluginOAuth = opts.plugin ? await mountPlugin(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, auth, google, sendMail, mailAllowed: (email) => !tooManyMails('verify', email), publicUrl: opts.plugin.publicUrl, webDir: opts.plugin.webDir, sessionCookie: SESSION_COOKIE, production: !!opts.staticDir }) : null;
+  const pluginOAuth = opts.plugin ? await mountPlugin(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, auth, google, sendMail, mailAllowed: (email) => !tooManyMails('verify', email), pdf: pdfMaker ?? undefined, publicUrl: opts.plugin.publicUrl, webDir: opts.plugin.webDir, sessionCookie: SESSION_COOKIE, production: !!opts.staticDir }) : null;
   // Raw file uploads (xlsx import).
   app.addContentTypeParser([XLSX_MIME, PPTX_MIME, DOCX_MIME, 'application/vnd.ms-excel', 'application/octet-stream'], { parseAs: 'buffer', bodyLimit: MAX_IMPORT_BYTES }, (_req, body, done) =>
     done(null, body),
@@ -299,14 +319,23 @@ export async function buildApp(opts: AppOptions) {
   // edit tools on a file open in a window run in that window (windowTools.ts).
   const windowTools = opts.local?.mcp ? new WindowTools() : null;
   const localMcp = opts.local?.mcp
-    ? await mountLocalMcp(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, folders, userId: localUser!.id, token: opts.local.mcp.token, publicUrl: opts.local.mcp.url ?? null, show: opts.local.mcp.show, changed: opts.local.mcp.changed, live: windowTools })
+    ? await mountLocalMcp(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, folders, userId: localUser!.id, token: opts.local.mcp.token, publicUrl: opts.local.mcp.url ?? null, show: opts.local.mcp.show, changed: opts.local.mcp.changed, live: windowTools, pdf: pdfMaker ?? undefined })
     : null;
-  app.addHook('onRequest', async (req) => {
+  app.addHook('onRequest', async (req, reply) => {
+    // The headless browser making a PDF carries a print ticket instead of a session (server/pdf.ts): it is the
+    // user who asked, for reading only.
+    const printing = pdfMaker?.tickets.userFor(req.cookies[PRINT_COOKIE]);
+    if (printing) {
+      req.user = localUser ?? (db.prepare('SELECT id, email FROM users WHERE id = ?').get(printing) as User | undefined) ?? null;
+      if (req.method !== 'GET' && req.method !== 'HEAD') return reply.code(403).send({ error: 'Read only' });
+      return;
+    }
     if (localUser) req.user = !opts.local!.token || req.cookies[opts.local!.cookie ?? LOCAL_COOKIE] === opts.local!.token ? localUser : null;
     else req.user = auth.userForSession(req.cookies[SESSION_COOKIE]);
   });
   app.addHook('onClose', async () => {
     await closePdfReaders();
+    await pdfMaker?.renderer.close();
     if (backup) {
       backup.stop();
       // Let queued uploads finish before the database closes (a redeploy gives 15 s).
@@ -1031,9 +1060,28 @@ export async function buildApp(opts: AppOptions) {
         .header('Cache-Control', 'no-store')
         .header('X-Content-Type-Options', 'nosniff');
 
+    // A PDF of a document, presentation, Markdown file or stored web page (server/pdf.ts): the file's page in the
+    // app, loaded by a headless browser with a print ticket, or the web page's own HTML.
+    const sendPdf = async (req: FastifyRequest, reply: FastifyReply, id: string) => {
+      if (!pdfMaker) return reply.code(400).send({ error: 'PDFs cannot be made here.' });
+      const { locale } = req.query as { locale?: string };
+      const paper = paperFor(locale ?? String(req.headers['accept-language'] ?? '').split(',')[0]);
+      try {
+        // In development the app's pages are where the request came from (Vite), not on this server.
+        const made = await pdfMaker.make(req.user!.id, id, { paper, origin: opts.staticDir ? undefined : `${req.protocol}://${req.headers.host}` });
+        if (!made) return reply.code(404).send({ error: 'File not found' });
+        if (made.revision) reply.header('X-Revision', made.revision);
+        return attachment(reply, made.name, 'application/pdf').send(made.pdf);
+      } catch (e) {
+        if (e instanceof PrintError) return reply.code(e instanceof NotPrintableError ? 400 : 500).send({ error: e.message });
+        throw e;
+      }
+    };
+
     r.get('/api/files/:id/export', async (req, reply) => {
       const { id } = req.params as { id: string };
       const { format, tab } = req.query as { format?: string; tab?: string };
+      if (format === 'pdf') return sendPdf(req, reply, id);
       const loaded = await loadFile(sheets, req.user!.id, id);
       if (!loaded) return reply.code(404).send({ error: 'File not found' });
       const fmt = (format ?? (loaded.meta.format === 'csv' ? 'csv' : EXPORT_FORMATS[loaded.meta.kind][0])) as ExportFormat;

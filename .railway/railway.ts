@@ -18,7 +18,9 @@ export default defineRailway(() => {
       // Self-improvement: app-change jobs run Claude Code in this container, so the image needs git and the
       // dev dependencies (vite, vitest, tsc) to rebuild and verify. GITHUB_TOKEN (contents + pull requests,
       // read/write) is set in the dashboard, not here.
-      RAILPACK_DEPLOY_APT_PACKAGES: "git",
+      // Chromium makes PDFs (Download as PDF, server/pdf.ts), found at CHROMIUM_PATH.
+      RAILPACK_DEPLOY_APT_PACKAGES: "git chromium",
+      CHROMIUM_PATH: "/usr/bin/chromium",
       RAILPACK_PRUNE_DEPS: "false",
       // Off-box copy of every file in Cloudflare R2 (server/backup.ts): R2_BUCKET, R2_ACCESS_KEY_ID,
       // R2_SECRET_ACCESS_KEY and CLOUDFLARE_ACCOUNT_ID are secrets, set in the dashboard, not here.
