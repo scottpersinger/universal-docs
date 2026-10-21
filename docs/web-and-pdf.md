@@ -10,7 +10,7 @@ Two features, one after the other:
 1. **Download as PDF** for documents, presentations, Markdown files and stored web pages, made by the server
    so it is one click (a file arrives) rather than the browser's print dialog, and so other things can make
    the same PDF without a window: the assistant, the MCP tools, and the desktop app keeping a PDF up to date.
-2. **The web in the desktop app**: the hosted Universal Docs in a tab of MCP Docs, beside the local folders,
+2. **The web in the desktop app**: the hosted app (MCP Docs on the web) in a tab of the desktop app, beside the local folders,
    with files copied between the two on request and, if asked, kept updated one way (web to local).
 
 ## Decisions made

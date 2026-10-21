@@ -56,7 +56,7 @@ describe("the desktop app's MCP server", () => {
     // Only the model's tools: none of the parts for ChatGPT's own app.
     expect(tools.map((t) => t.name)).not.toContain('app_state');
 
-    // It is MCP Docs, not the hosted Universal Docs.
+    // It is the desktop app's MCP Docs (mcp-docs), not the hosted one (universal-docs).
     expect(client.getServerVersion()).toMatchObject({ name: 'mcp-docs', title: 'MCP Docs' });
     expect(client.getInstructions()).toMatch(/^MCP Docs:/);
     const list = JSON.parse(text(await client.callTool({ name: 'list_files', arguments: {} })));

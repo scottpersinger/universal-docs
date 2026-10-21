@@ -62,7 +62,7 @@ export function ChangesPage() {
       <header className="home-header">
         <div className="home-brand">
           <Link to="/" className="home-back">
-            ‹ Universal Docs
+            ‹ MCP Docs
           </Link>
           <span>Changes</span>
         </div>

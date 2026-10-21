@@ -21,7 +21,7 @@ const signedOut = (e: unknown) => e instanceof ApiError && e.code === 'web-signe
 function SignInFirst({ onClose }: { onClose(): void }) {
   return (
     <>
-      <p>Sign in to Universal Docs on the web first: open the Web tab and sign in, then try again.</p>
+      <p>Sign in to MCP Docs on the web first: open the Web tab and sign in, then try again.</p>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>
           Cancel

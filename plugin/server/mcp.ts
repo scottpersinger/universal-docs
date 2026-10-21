@@ -31,11 +31,11 @@ export const MCP_VERSIONS = [1, 2] as const;
 export type McpVersion = (typeof MCP_VERSIONS)[number];
 const SERVER_VERSIONS: Record<McpVersion, string> = { 1: '0.2.0', 2: '0.3.0' };
 /**
- * Who the server says it is: Universal Docs on the web, MCP Docs in the desktop app (for agents on the
- * same machine). Version 1 keeps the name it was submitted under.
+ * Who the server says it is: MCP Docs, on the web (id universal-docs, which agents' settings name) and in the
+ * desktop app (mcp-docs, for agents on the same machine). Version 1 keeps the name it was submitted under.
  */
 export const serverInfo = (version: McpVersion = 1, local = false) => ({
-  ...(local ? { name: 'mcp-docs', title: 'MCP Docs' } : version === 1 ? { name: 'freeflow-docs' } : { name: 'universal-docs', title: 'Universal Docs' }),
+  ...(local ? { name: 'mcp-docs', title: 'MCP Docs' } : version === 1 ? { name: 'freeflow-docs' } : { name: 'universal-docs', title: 'MCP Docs' }),
   version: SERVER_VERSIONS[version],
 });
 /** Version 1's server info. */
@@ -90,7 +90,8 @@ const V2_INSTRUCTIONS =
 
 /** The instructions a version of the server gives; version 2 adds how to read stored files, upload local ones and use folders. */
 export const instructionsFor = (version: McpVersion = 1, local = false): string => {
-  const intro = local ? INSTRUCTIONS.replace(/^Universal Docs:/, `${appName(true)}:`) : INSTRUCTIONS;
+  // Version 1 (ChatGPT's) keeps the name it was submitted under.
+  const intro = version === 1 && !local ? INSTRUCTIONS : INSTRUCTIONS.replace(/^Universal Docs:/, `${appName(true)}:`);
   return version === 1
     ? intro
     : `${intro}\n${V2_INSTRUCTIONS}\nStored files (kind file: PDFs, web pages, pictures, videos and other uploads) are not edited. read_file returns one exactly as it is (a text file's text, a picture, or the bytes of a PDF or other file), and read_doc with its id as doc_id reads its text as numbered blocks. convert_pdf_to_markdown makes a Markdown document of a PDF's text, to edit.`;

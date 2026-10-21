@@ -6,9 +6,9 @@ import { DEVICE_ACCESS_TTL_MS, DEVICE_GRANT, REFRESH_TTL_MS } from '../plugin/se
 /** The file for this origin. `mcp` is whether the plugin's MCP server is mounted here (and so worth describing). */
 export function llmsTxt(origin: string, mcp: boolean): string {
   const days = (ms: number) => Math.round(ms / (24 * 60 * 60 * 1000));
-  const about = `# Universal Docs
+  const about = `# MCP Docs
 
-> Universal Docs is a web app for text documents, Markdown files, spreadsheets and slide presentations, with a place for stored files (PDFs, pictures, videos, web pages). It imports Word, Excel, PowerPoint, CSV and Markdown files.
+> MCP Docs is a web app for text documents, Markdown files, spreadsheets and slide presentations, with a place for stored files (PDFs, pictures, videos, web pages). It imports Word, Excel, PowerPoint, CSV and Markdown files.
 
 The app is at ${origin}. It is a single-page app: its pages need a browser, so read this file rather than the site's HTML.
 `;
@@ -16,10 +16,10 @@ The app is at ${origin}. It is a single-page app: its pages need a browser, so r
   return `${about}
 ## MCP server
 
-Universal Docs has a remote MCP server, so an agent can read and edit the files in a person's account.
+MCP Docs has a remote MCP server, so an agent can read and edit the files in a person's account.
 
 - Endpoint: \`${origin}/mcp/v2\` (streamable HTTP)
-- Sign-in: OAuth 2.1. The person signs in to their own Universal Docs account and allows the agent; there are no API keys.
+- Sign-in: OAuth 2.1. The person signs in to their own MCP Docs account and allows the agent; there are no API keys.
 - Scopes: \`files:read\`, \`files:write\`
 - Discovery: \`${origin}/.well-known/oauth-protected-resource/mcp/v2\` and \`${origin}/.well-known/oauth-authorization-server\`
 

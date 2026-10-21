@@ -427,7 +427,7 @@ describe('PowerPoint files (desktop app)', () => {
     deck.store.guard = pptxGuard;
     await call('update_slide', { slide: 1, background: '#123456' });
     expect(deck.deck.slides[0].bg).toBe('#123456');
-    await expect(call('update_slide', { slide: 1, background: 'linear-gradient(90deg, #ff0000, #0000ff)' })).rejects.toThrow(/PowerPoint file.*gradient fills.*Universal Docs presentation/s);
+    await expect(call('update_slide', { slide: 1, background: 'linear-gradient(90deg, #ff0000, #0000ff)' })).rejects.toThrow(/PowerPoint file.*gradient fills.*MCP Docs presentation/s);
     expect(deck.deck.slides[0].bg).toBe('#123456');
   });
 

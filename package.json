@@ -100,7 +100,7 @@
     "node": ">=24"
   },
   "main": "desktop/main.js",
-  "description": "Universal Docs: spreadsheets, documents and presentations",
+  "description": "MCP Docs: spreadsheets, documents and presentations",
   "author": "FreeFlow",
   "build": {
     "appId": "im.freeflow.docs",

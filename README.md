@@ -81,7 +81,7 @@ Each file has its own chat, and the home page has one. See [Assistant](#assistan
 
 ## Using the app
 
-The folder's files are the file list and its directories are the library's folders (see Folders below; hidden entries and `node_modules` are skipped). A file's name in the list is its file name without the extension. **File → Open Folder…** switches to another folder. There is no account and nothing to sign in to.
+The folder's files are the file list and its directories are the library's folders (see Folders below; hidden entries and `node_modules` are skipped). A file's name in the list is its file name without the extension. **File → Open Folder…** switches to another folder. Your folders need no account and nothing to sign in to; your web files do (see Your web files below).
 
 - Markdown (`.md`) and CSV (`.csv`) files open in their editors and are saved back as the plain text they are.
 - Spreadsheets, presentations and documents are Excel, PowerPoint and Word files (`.xlsx`, `.pptx`, `.docx`), edited in place; new ones are made as those too, and a CSV file that outgrows CSV becomes an `.xlsx` file. A file made elsewhere that holds something the app can't keep opens read-only until you allow editing, and the first save over it keeps a copy in the app's trash. Only a file its Office format cannot hold (a picture in a cell, a gradient, a video in a document) is kept in the app's own format (`.ffsheet`, `.ffslides`, `.ffdoc`), after asking.
@@ -238,6 +238,20 @@ How the comparison works (`shared/diff.ts`):
 - **Formulas** are rewritten into the base's row numbers and sheet IDs before comparing. Formulas that the app adjusted because of row inserts, deletes or sheet renames don't show as edits.
 - **Detached branches:** if the original is deleted, the branch keeps working and compares against the base.
 
+## Your web files
+
+Beside the folders on your computer, the app shows your MCP Docs account on the web (docs.freeflow.im) in a **Web tab**, in the same window. The **Local | Web** switch beside the logo goes from one to the other (**File → Open Web Tab** too), and each tab's title ends in "— Local" or "— Web". The two are separate libraries: nothing syncs, and a copy is a new file.
+
+- **Signing in:** only when you first open a Web tab. Email and password sign in inside the tab; **Continue with Google** finishes in your browser, and the tab signs itself in a moment later. **File → Sign Out of Web** signs out.
+- **Upload to Web…** (a file's ⋮ menu in a folder) copies it into one of your web folders, pictures and all.
+- **Download to Folder…** (a file's ⋮ menu in a Web tab) copies a web file into a folder on your computer as a Word, PowerPoint or Excel file, in the app's own format (which keeps everything), or as a PDF; the dialog says what an Office file would not keep. On the web in any browser the same item is **Download to MCP Docs**, which opens the app's dialog.
+
+Developing, a Web tab can point at a local server instead: start the app with `UNIVERSAL_WEB_URL=http://localhost:5173`. How it works is in `docs/web-and-pdf.md`.
+
+## PDFs
+
+**File → Download as PDF** in a document, presentation or Markdown file, and **Download as PDF** on a saved web page (or in a file's ⋮ menu), downloads it as a PDF laid out as it prints: documents with their page setup, one slide per page, Markdown as its preview with diagrams drawn. Agents can make one with `export_pdf`, which keeps the PDF next to the file. The desktop app prints them itself; the web version needs Chromium (see below).
+
 ## Find
 
 Press **⌘F** (Ctrl+F on Windows and Linux), or use **Edit → Find…**, to open the find bar. Inside a spreadsheet it replaces the browser's page search.
@@ -285,8 +299,8 @@ OAuth 2.0).
 ## Web version
 
 The same app runs as a web service with accounts (`npm run dev`, or `npm run build && npm start`), hosted as
-Universal Docs at docs.freeflow.im, where it is also a plugin for ChatGPT (`plugin/`). For now MCP Docs is meant to be
-installed locally; the web version will come later.
+MCP Docs at docs.freeflow.im, where it is also a plugin for ChatGPT (`plugin/`, named Universal Docs there). The desktop app
+shows it in its Web tabs (see Your web files).
 
 ```sh
 npm run dev        # API on :3001 and Vite on :5173; open http://localhost:5173
@@ -301,7 +315,7 @@ Email verification: a password sign-up gets no session until the link in the ver
 
 Google sign-in: with `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set (an OAuth web client whose authorised redirect URIs include `<APP_URL>/api/auth/google/callback`), the sign-in and registration pages show **Continue with Google**. The first Google sign-in links to an existing verified account with the same email, takes over an unverified one (its password stops working, since whoever set it never proved they own the address), or creates a new one with no password (set one later with **Forgot your password?**). `APP_URL` sets the origin used in the link (defaults to the requesting origin). `LEGACY_HOSTS` lists old host names (comma-separated) that redirect to `APP_URL` with the same path, for moving the app to a new domain.
 
-Environment variables: `PORT` (default 3001), `HOST` (default 127.0.0.1), `DATA_DIR` (default `./data`), and `SECURE_COOKIES=1` for HTTPS deployments. The assistant needs `ANTHROPIC_API_KEY`. For local development, copy `.env.example` to `.env` (git-ignored) and fill it in; the server loads it on start (`server/env.ts`), so restart it after editing. You can also set `AGENT_MODEL` (`claude-sonnet-5-5` by default, or `claude-opus-5-5`), `AGENT_EFFORT` (`low`, `medium` (default) or `high`) and `AGENT_DAILY_REQUEST_LIMIT` (model calls per user per day, default 500). The coding and research jobs run Claude Code with the same key and its default model unless `CODING_API_KEY` (a separate API key, or a Claude Code OAuth token from `claude setup-token`, billed apart) or `CODING_MODEL` (a model id to pin) is set.
+Environment variables: `PORT` (default 3001), `HOST` (default 127.0.0.1), `DATA_DIR` (default `./data`), and `SECURE_COOKIES=1` for HTTPS deployments. Download as PDF needs a Chromium: `CHROMIUM_PATH` names one (on Railway, Debian's `chromium` from `RAILPACK_DEPLOY_APT_PACKAGES`, at `/usr/bin/chromium`), else a Playwright-installed Chromium or Chrome on the machine is used; in development the pages it prints come from Vite (`PRINT_ORIGIN`, default `http://localhost:5173`). The assistant needs `ANTHROPIC_API_KEY`. For local development, copy `.env.example` to `.env` (git-ignored) and fill it in; the server loads it on start (`server/env.ts`), so restart it after editing. You can also set `AGENT_MODEL` (`claude-sonnet-5-5` by default, or `claude-opus-5-5`), `AGENT_EFFORT` (`low`, `medium` (default) or `high`) and `AGENT_DAILY_REQUEST_LIMIT` (model calls per user per day, default 500). The coding and research jobs run Claude Code with the same key and its default model unless `CODING_API_KEY` (a separate API key, or a Claude Code OAuth token from `claude setup-token`, billed apart) or `CODING_MODEL` (a model id to pin) is set.
 
 ## Self-improvement (experimental)
 

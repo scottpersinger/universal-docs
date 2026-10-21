@@ -44,7 +44,7 @@ export function VerifyEmailPage() {
       <div className="auth-card">
         <div className="auth-brand">
           <HomeIcon size={36} />
-          <span>Universal Docs</span>
+          <span>MCP Docs</span>
         </div>
         <h1>{error ? 'Link not valid' : 'Verifying your email…'}</h1>
         {error ? (

@@ -8,7 +8,7 @@ import { SettingsError } from './settings.ts';
 
 const BASE_URL = 'https://openrouter.ai/api/v1';
 /** How OpenRouter knows the app (its attribution header). */
-const APP_HEADERS = { 'X-Title': 'Universal Docs' };
+const APP_HEADERS = { 'X-Title': 'MCP Docs' };
 
 type Params = Parameters<ModelCall>[0];
 type Message = Anthropic.Beta.BetaMessage;

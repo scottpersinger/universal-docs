@@ -1,7 +1,7 @@
 // The desktop app (Electron). It opens a folder as the library: the folder given on the command line, or
 // the directory the app was started in. The app itself is the web app, served to this window by a local
 // server (desktop/server.ts) that reads and writes the folder's files. A window may instead be a Web tab: the
-// hosted Universal Docs, signed in to the person's account (docs/web-and-pdf.md).
+// hosted app (MCP Docs on the web), signed in to the person's account (docs/web-and-pdf.md).
 import { app, BrowserWindow, clipboard, dialog, Menu, session, shell } from 'electron';
 import { execFile, fork } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -406,8 +406,6 @@ const WINDOW_OPTIONS = { width: 1400, height: 900, title: 'MCP Docs', tabbingIde
 function titled(win, kind) {
   win.on('page-title-updated', (e, title) => {
     e.preventDefault();
-    // index.html is titled with the hosted app's name until the page learns it is this app (client/src/brand.ts).
-    if (kind === 'Local' && title === 'Universal Docs') return;
     win.setTitle(`${title.replace(/ - (MCP Docs|Universal Docs)$/, '')} — ${kind}`);
   });
 }

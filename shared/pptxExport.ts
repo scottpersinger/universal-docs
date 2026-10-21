@@ -147,7 +147,7 @@ export async function buildPptx(deck: Deck, title: string, loadImage: ImageLoade
     if (slide.notes) s.addNotes(slide.notes);
   }
   if (missingImages) warnings.push(`${missingImages} image${missingImages === 1 ? '' : 's'} could not be loaded and ${missingImages === 1 ? 'was' : 'were'} left as a placeholder.`);
-  if (storedVideos) warnings.push(`${storedVideos} video${storedVideos === 1 ? ' is' : 's are'} not in the file: a video from your files stays in Universal Docs, and its place is marked on the slide.`);
+  if (storedVideos) warnings.push(`${storedVideos} video${storedVideos === 1 ? ' is' : 's are'} not in the file: a video from your files stays in MCP Docs, and its place is marked on the slide.`);
   return { pres, warnings };
 
   /**

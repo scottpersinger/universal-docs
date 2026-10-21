@@ -9,7 +9,7 @@ import { FileHub, type FileService } from './files.ts';
 import { buildSlide, newId } from '../../shared/deck.ts';
 import { buildPptx } from '../../shared/pptxExport.ts';
 import { buildDocx } from '../../server/testing.ts';
-import { appHtml, appUri, createMcpServer, serverInfo, type McpVersion } from './mcp.ts';
+import { appHtml, appUri, createMcpServer, instructionsFor, serverInfo, type McpVersion } from './mcp.ts';
 import { readFileSync } from 'node:fs';
 import { resolver } from '../../server/webFetch.ts';
 import { closePdfReaders } from '../../server/pdfMarkdown.ts';
@@ -177,8 +177,10 @@ describe('MCP server', () => {
 
   it('names the app resource after the bundle hash', () => {
     expect(appUri('h1')).toBe('ui://freeflow-docs/app-h1.html');
-    // Universal Docs from version 2; version 1 keeps the name it was submitted under. The desktop app's is MCP Docs.
+    // MCP Docs (id universal-docs) from version 2; version 1 keeps the name it was submitted under. The desktop app's is MCP Docs (mcp-docs).
     expect([serverInfo(1).name, serverInfo(2).name, serverInfo(2, true).name]).toEqual(['freeflow-docs', 'universal-docs', 'mcp-docs']);
+    expect([serverInfo(2), serverInfo(2, true)].map((i) => ('title' in i ? i.title : null))).toEqual(['MCP Docs', 'MCP Docs']);
+    expect([instructionsFor(1), instructionsFor(2), instructionsFor(2, true)].map((t) => t.split(':')[0])).toEqual(['Universal Docs', 'MCP Docs', 'MCP Docs']);
     expect(appUri('h2')).not.toBe(appUri('h1'));
   });
 
@@ -479,7 +481,7 @@ describe('MCP server', () => {
     await v2edit.close();
     // Removing a background is for the full app: said at once, with nothing handed to the app and nothing changed.
     const noRemoval = await call('transform_image', { file_id: imgId, rotate: 90, remove_background: true });
-    expect(noRemoval).toMatchObject({ isError: true, text: expect.stringMatching(/only available in the full Universal Docs app.*Nothing was changed/) });
+    expect(noRemoval).toMatchObject({ isError: true, text: expect.stringMatching(/only available in the full MCP Docs app.*Nothing was changed/) });
     expect((await call('app_state')).data?.jobs).toBeUndefined();
     expect((await call('transform_image', { file_id: imgId })).text).toMatch(/at least one change/);
     // The app's own tools are not offered to the model.

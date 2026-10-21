@@ -1,5 +1,5 @@
 // Local | Web, beside the logo in the desktop app (MCP Docs; docs/web-and-pdf.md): which kind of tab this is (a
-// folder on this computer, or the hosted Universal Docs) and a switch to the other. The other side is an
+// folder on this computer, or the person's files on the web) and a switch to the other. The other side is an
 // mcpdocs:// link, which desktop/main.js catches before it loads: the hosted page gets nothing of the app's to
 // call. Shown only in the app, which marks its pages' user agent.
 import { useAuth } from '../auth.tsx';
@@ -27,7 +27,7 @@ export function PlaceSwitch() {
           Web
         </span>
       ) : (
-        <a href="mcpdocs://switch?to=web" title="Go to your files on the web (Universal Docs)">
+        <a href="mcpdocs://switch?to=web" title="Go to your files on the web">
           Web
         </a>
       )}

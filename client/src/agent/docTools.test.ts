@@ -246,7 +246,7 @@ describe('Word files (desktop app)', () => {
     const { doc, call, md } = setup('Hello.');
     doc.store.guard = docxGuard;
     await call('insert_content', { markdown: 'More.' });
-    await expect(call('insert_content', { markdown: '![Demo](https://www.youtube.com/watch?v=dQw4w9WgXcQ)' })).rejects.toThrow(/Word file.*videos.*Universal Docs document/s);
+    await expect(call('insert_content', { markdown: '![Demo](https://www.youtube.com/watch?v=dQw4w9WgXcQ)' })).rejects.toThrow(/Word file.*videos.*MCP Docs document/s);
     expect(md()).not.toContain('youtube');
   });
 

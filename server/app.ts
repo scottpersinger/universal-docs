@@ -393,8 +393,8 @@ export async function buildApp(opts: AppOptions) {
     const hours = Math.round(VERIFY_TTL_MS / 3600000);
     await sendMail({
       to: user.email,
-      subject: 'Verify your email for Sheets',
-      text: `Welcome to Sheets! Confirm that ${user.email} is your address by opening this link (it expires in ${hours} hours):\n${link}\n\nIf you didn't create a Sheets account, you can ignore this email.`,
+      subject: 'Verify your email for MCP Docs',
+      text: `Welcome to MCP Docs! Confirm that ${user.email} is your address by opening this link (it expires in ${hours} hours):\n${link}\n\nIf you didn't create an MCP Docs account, you can ignore this email.`,
     });
   };
 
@@ -468,8 +468,8 @@ export async function buildApp(opts: AppOptions) {
       try {
         await sendMail({
           to: reset.user.email,
-          subject: 'Reset your Sheets password',
-          text: `Someone asked to reset the password for ${reset.user.email} on Sheets.\n\nSet a new password here (the link works once and expires in ${minutes} minutes):\n${link}\n\nIf you didn't ask for this, you can ignore this email; your password stays the same.`,
+          subject: 'Reset your MCP Docs password',
+          text: `Someone asked to reset the password for ${reset.user.email} on MCP Docs.\n\nSet a new password here (the link works once and expires in ${minutes} minutes):\n${link}\n\nIf you didn't ask for this, you can ignore this email; your password stays the same.`,
         });
       } catch (e) {
         req.log.error({ err: e }, 'password reset email failed');

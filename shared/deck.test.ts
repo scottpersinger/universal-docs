@@ -98,7 +98,7 @@ describe('the built-in guide', () => {
     const deck = gettingStartedDeck();
     expect(validateDeck(deck)).toBeNull();
     expect(deck.slides).toHaveLength(GETTING_STARTED_SLIDES.length);
-    expect(slideTitle(deck.slides[0])).toBe('Getting started with Universal Docs');
+    expect(slideTitle(deck.slides[0])).toBe('Getting started with MCP Docs');
     // Each copy is its own file, with its own ids.
     expect(gettingStartedDeck().slides[0].id).not.toBe(deck.slides[0].id);
     expect(findGettingStarted([{ title: 'Plan' }, { title: GETTING_STARTED_TITLE, id: 'd1' }])).toEqual({ title: GETTING_STARTED_TITLE, id: 'd1' });

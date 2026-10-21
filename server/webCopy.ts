@@ -60,7 +60,7 @@ const OFFICE_EXT: Partial<Record<DocKind, string>> = { doc: '.docx', deck: '.ppt
 const NATIVE_EXT: Record<DocKind, string> = { doc: '.ffdoc', deck: '.ffslides', sheet: '.ffsheet', markdown: '.md' };
 const OFFICE_NAME: Partial<Record<DocKind, string>> = { doc: 'Word', deck: 'PowerPoint', sheet: 'Excel' };
 
-const SIGNED_OUT = 'Sign in to Universal Docs on the web first: open a Web tab (File › Open Web Tab) and sign in.';
+const SIGNED_OUT = 'Sign in to MCP Docs on the web first: open a Web tab (File › Open Web Tab) and sign in.';
 
 /** The hosted app's JSON answer, or the error it gave. */
 async function call<T>(web: Web, method: string, path: string, payload?: unknown): Promise<T> {

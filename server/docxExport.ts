@@ -428,7 +428,7 @@ export async function docDocx(doc: Doc, title: string, loadImage: DocxImageLoade
     'docProps/core.xml',
     `${XML_HEAD}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${esc(title)}</dc:title></cp:coreProperties>`,
   );
-  zip.file('docProps/app.xml', `${XML_HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Universal Docs</Application></Properties>`);
+  zip.file('docProps/app.xml', `${XML_HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>MCP Docs</Application></Properties>`);
   const types = [...writer.usedExt].map((ext) => `<Default Extension="${ext}" ContentType="image/${ext}"/>`).join('');
   zip.file(
     '[Content_Types].xml',

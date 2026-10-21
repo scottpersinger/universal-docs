@@ -1,13 +1,15 @@
-# Universal Docs / MCP Docs
+# MCP Docs
 
 An editor for office files and more: spreadsheets, presentations, documents, Markdown, CSV, PDFs, pictures
 and videos, with a built-in AI assistant, and an MCP server so other agents can work on the same files. One
 codebase ships as three products (names in `shared/brand.ts`):
 
-- **Universal Docs**, the hosted web app: accounts, files stored on the server.
+- **MCP Docs on the web**, the hosted app at docs.freeflow.im: accounts, files stored on the server.
 - **MCP Docs**, the desktop app (`desktop/`, Electron): the same server and client over a folder of real
   Word, PowerPoint, Excel, Markdown and CSV files, and an MCP server for agents on the machine (Claude Code).
-- **Universal Docs in ChatGPT**, the ChatGPT plugin (`plugin/`): model tools and a web view, on the hosted app.
+- **Universal Docs in ChatGPT**, the ChatGPT plugin (`plugin/`): model tools and a web view, on the hosted app. It
+  keeps the name it was submitted to OpenAI under (`plugin/plugin.json`, the version 1 tools, its app) until its
+  review is done; everything else, the hosted app included, is MCP Docs.
 
 React + Vite client, Fastify server, SQLite via `node:sqlite`. The server runs TypeScript directly with Node's
 type stripping; imports use `.ts` extensions.
@@ -77,7 +79,7 @@ type stripping; imports use `.ts` extensions.
   file to a native spreadsheet (`POST /api/sheets/:id/convert`); the assistant's tools get a `ToolError`
   telling it to ask the user to convert.
 - The desktop app (`desktop/`, `npm run desktop`) is Electron around the same server and client, named MCP Docs
-  (the hosted app and the ChatGPT plugin are Universal Docs; code shared by both names it with `appName` in
+  (the hosted app is MCP Docs too, the ChatGPT plugin Universal Docs; code shared by both names it with `appName` in
   `shared/brand.ts`, and the client with `appName()` in `client/src/brand.ts`, set from `/api/auth/me`). `main.js`
   starts `desktop/server.ts` as a child process for the folder being opened (the command-line argument or
   the current directory) and loads it in a window. Each window (a tab, on macOS) shows one folder, and each folder
@@ -126,7 +128,7 @@ type stripping; imports use `.ts` extensions.
   `main.js`'s dialog) and Open file by path… (`POST /api/local/open-path`: a file or folder, absolute, `~/` or
   relative to the open folder; one outside it has `main.js` open it, or the file's own folder).
   The desktop app is also an MCP server for agents on the same machine (Claude Code, say), named MCP Docs
-  (`mcp-docs`; the hosted one is Universal Docs, `universal-docs`, from version 2): `server/localMcp.ts`
+  (`mcp-docs`; the hosted one is MCP Docs too from version 2, with the id `universal-docs`): `server/localMcp.ts`
   serves the ChatGPT plugin's model tools (`plugin/server`, the newest version, no UI parts) over the open
   folder's stores at `/mcp`. `main.js` serves it on a fixed port (127.0.0.1:39217, `UNIVERSAL_MCP_PORT`),
   passing requests to the server of the window in front (`frontServer`) with a secret made for each run. Agents sign in

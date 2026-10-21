@@ -8,7 +8,7 @@ export const GETTING_STARTED_TITLE = 'Getting started';
 
 /** The built-in guide's slides, as the layouts build them. */
 export const GETTING_STARTED_SLIDES: (SlideContent & { layout: LayoutId })[] = [
-  { layout: 'title', title: 'Getting started with Universal Docs', subtitle: 'Documents, presentations and spreadsheets in one place' },
+  { layout: 'title', title: 'Getting started with MCP Docs', subtitle: 'Documents, presentations and spreadsheets in one place' },
   { layout: 'title-body', title: 'Start something new', body: ['- Pick a blank spreadsheet, presentation or document from the home page', '- Or import a Word, PowerPoint, Excel, PDF, Markdown or CSV file', '- Everything saves automatically'] },
   { layout: 'title-body', title: 'Work with the assistant', body: ['- Open the Assistant to ask for edits in plain language', '- Select text or a slide element and ask about just that', '- Undo anything it changed in one step'] },
   { layout: 'section', title: 'More to come', subtitle: 'This guide is a placeholder and will grow.' },

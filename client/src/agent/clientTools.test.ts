@@ -613,12 +613,12 @@ describe('CSV files', () => {
 });
 
 describe('Excel files (desktop app)', () => {
-  it('take formatting, but refuse a picture in a cell and say to keep the file as a Universal Docs spreadsheet', async () => {
+  it('take formatting, but refuse a picture in a cell and say to keep the file as an MCP Docs spreadsheet', async () => {
     const { ctl, call } = setup();
     ctl.store.guard = xlsxGuard;
     await call('format_range', { range: 'A1:B1', bold: true });
     expect(ctl.tab.cells.A1?.st).toEqual({ b: true });
-    await expect(call('set_cell_image', { range: 'C3', url: 'https://example.com/logo.png' })).rejects.toThrow(/Excel file.*pictures in cells.*Universal Docs spreadsheet/s);
+    await expect(call('set_cell_image', { range: 'C3', url: 'https://example.com/logo.png' })).rejects.toThrow(/Excel file.*pictures in cells.*MCP Docs spreadsheet/s);
     expect(ctl.tab.cells.C3).toBeUndefined();
   });
 

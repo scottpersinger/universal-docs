@@ -11,7 +11,7 @@ const mail = `<a href="mailto:${CONTACT}">${CONTACT}</a>`;
 const PRIVACY = `
 <h1>Privacy Policy</h1>
 <p class="updated">Last updated ${UPDATED}</p>
-<p>Universal Docs is published by ${PUBLISHER} ("we"). It is an editor for documents, presentations, spreadsheets, Markdown files and pictures, used in a web browser at docs.freeflow.im and inside ChatGPT as the Universal Docs plugin. This policy says what we collect, why, and who else receives it.</p>
+<p>MCP Docs is published by ${PUBLISHER} ("we"). It is an editor for documents, presentations, spreadsheets, Markdown files and pictures, used in a web browser at docs.freeflow.im and inside ChatGPT as the Universal Docs plugin (its name in ChatGPT). This policy says what we collect, why, and who else receives it.</p>
 
 <h2>What we collect</h2>
 <ul>
@@ -27,7 +27,7 @@ const PRIVACY = `
 <p>To provide the service: to store and show your files, to make the edits you or an assistant ask for, to sign you in, to send account email (verification and password reset), and to keep the service working and secure. We do not use the contents of your files to train models.</p>
 
 <h2>Universal Docs in ChatGPT</h2>
-<p>When you connect the plugin, ChatGPT signs in to your Universal Docs account with your permission. When you ask ChatGPT to work with your files, the plugin's tools return what the request needs to ChatGPT: the titles and identifiers of your files, the contents of the file being read or edited (text, slides, cells), pictures you ask it to look at, where your cursor or selection is in the open file, and, when ChatGPT asks which account is connected, your email address. What ChatGPT does with that is governed by OpenAI's own terms and privacy policy. You can disconnect the plugin in ChatGPT at any time.</p>
+<p>When you connect the plugin, ChatGPT signs in to your MCP Docs account with your permission. When you ask ChatGPT to work with your files, the plugin's tools return what the request needs to ChatGPT: the titles and identifiers of your files, the contents of the file being read or edited (text, slides, cells), pictures you ask it to look at, where your cursor or selection is in the open file, and, when ChatGPT asks which account is connected, your email address. What ChatGPT does with that is governed by OpenAI's own terms and privacy policy. You can disconnect the plugin in ChatGPT at any time.</p>
 
 <h2>Who else receives data</h2>
 <ul>
@@ -47,7 +47,7 @@ const PRIVACY = `
 <p>Connections are encrypted (HTTPS), passwords are hashed, API keys you store are encrypted, and each account's files are only served to that account. No service can promise perfect security; tell us at once if you believe your account was accessed by someone else.</p>
 
 <h2>Children</h2>
-<p>Universal Docs is not directed to children under 13, and we do not knowingly collect their personal data.</p>
+<p>MCP Docs is not directed to children under 13, and we do not knowingly collect their personal data.</p>
 
 <h2>Changes and contact</h2>
 <p>If this policy changes we will post the new version here with its date. Questions and requests: ${mail}.</p>
@@ -56,7 +56,7 @@ const PRIVACY = `
 const TERMS = `
 <h1>Terms of Service</h1>
 <p class="updated">Last updated ${UPDATED}</p>
-<p>These terms are an agreement between you and ${PUBLISHER} ("we") for the use of Universal Docs, in a web browser at docs.freeflow.im and as the Universal Docs plugin in ChatGPT. By creating an account or using the service you accept them.</p>
+<p>These terms are an agreement between you and ${PUBLISHER} ("we") for the use of MCP Docs, in a web browser at docs.freeflow.im and as the Universal Docs plugin in ChatGPT. By creating an account or using the service you accept them.</p>
 
 <h2>Your account</h2>
 <p>You need an account, with an email address that is yours. Keep your password to yourself; you are responsible for what is done with your account. You must be at least 13 years old.</p>
@@ -88,7 +88,7 @@ const TERMS = `
 
 const SUPPORT = `
 <h1>Support</h1>
-<p>Universal Docs is published by ${PUBLISHER}. For help, a problem to report, or a request about your account or data, write to ${mail}. We answer within two business days.</p>
+<p>MCP Docs is published by ${PUBLISHER}. For help, a problem to report, or a request about your account or data, write to ${mail}. We answer within two business days.</p>
 
 <h2>When you write</h2>
 <p>Say what you were doing, what you expected and what happened. The name of the file and whether you were in the web app or in ChatGPT help us find the problem quickly.</p>
@@ -132,7 +132,7 @@ export function legalPage(path: string): string | null {
   const page = PAGES[path];
   if (!page) return null;
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${page.title} - Universal Docs</title><style>${STYLE}</style></head>
-<body><header><a href="/">Universal Docs</a></header><main>${page.body}</main><footer><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><span>${PUBLISHER}</span></footer></body></html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${page.title} - MCP Docs</title><style>${STYLE}</style></head>
+<body><header><a href="/">MCP Docs</a></header><main>${page.body}</main><footer><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><span>${PUBLISHER}</span></footer></body></html>
 `;
 }
