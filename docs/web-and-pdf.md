@@ -126,9 +126,10 @@ that tries to reach this machine prints without reaching it.
 - Each tab (a window, joined into tabs on macOS with `addTabbedWindow`, as File › New Tab does now) is either
   **Local**, one folder with its own server as today, or **Web**, the hosted app loaded from its address
   (`UNIVERSAL_WEB_URL`, the production address by default). Local and Web tabs can be in one window.
-- The **banner** at the top says Local (the folder) or Web (the account), and has a button to switch: it
+- A **Local | Web switch** beside the logo (on the home page, and on a signed-out Web tab's sign-in page) says
+  which kind this is and switches to the other: it
   selects a tab of the other kind in this window, else brings one forward in another window, else opens one
-  as a new tab here. Signed out of the web, it reads Sign in.
+  as a new tab here.
 - A tab's title carries its kind (*Proposal — Web*, *Q3 — Local*): native tabs show only titles.
 - File › New Tab opens the same kind as the tab in front. Open Folder… from a Web tab opens a Local tab.
   A file opened from the web list opens in a Web tab, a local one in a Local tab.
@@ -139,8 +140,8 @@ that tries to reach this machine prints without reaching it.
 - Without native tabs (Windows, Linux) Web is a window of its own, until the app has a tab strip of its own.
 
 As built: `UNIVERSAL_WEB_URL` (default `https://docs.freeflow.im`) is the hosted app. Both sessions add
-`MCPDocs/1` to the user agent, which is how the client knows to show the banner (`DesktopBanner`); a page in
-a Local tab knows it is local from `/api/auth/me`. The banner's switch is an `mcpdocs://switch?to=web|local`
+`MCPDocs/1` to the user agent, which is how the client knows to show the switch (`PlaceSwitch`); a page in
+a Local tab knows it is local from `/api/auth/me`. The switch's other side is an `mcpdocs://switch?to=web|local`
 link that `main.js` catches in `will-navigate` (`switchTo`), so the hosted page is given no IPC. A tab of the
 other kind "in this window" is one with the same frame (macOS tabs share it), else the one last in front
 (`recent`). File › Open Web Tab and File › Sign Out of Web are in the menu.
@@ -207,7 +208,7 @@ only.
 1. `PdfRenderer` (Playwright; Electron in the desktop app), print views, print tickets, the `/pdf` routes,
    Download as PDF in the four places. Railway: Chromium in the image.
 2. `export_pdf` for the assistant and the MCP.
-3. Web tabs, banner, sign-in (with the `mcpdocs://` hand-back for Google), Sign out of Web, devices.
+3. Web tabs, the Local | Web switch, sign-in (with the `mcpdocs://` hand-back for Google), Sign out of Web, devices.
 4. Upload to Web…, Download to Folder…, Download to MCP Docs from the browser.
 5. Keep updated, and the links on the hosted side.
 

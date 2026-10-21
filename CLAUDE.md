@@ -115,7 +115,7 @@ type stripping; imports use `.ts` extensions.
   folder instead; the new window starts at `/open?file=…&from=recents` (`pages/OpenLocalFile.tsx`), which
   finds the file (`GET /api/local/resolve`) and makes Recents the first breadcrumb (`client/src/listing.ts`).
   A window may instead be a Web tab: the hosted app (`UNIVERSAL_WEB_URL`) in a session of its own (`persist:web`),
-  beside the Local tabs (`createWebWindow`, `isWeb`). Both kinds show a Local/Web banner (`DesktopBanner`, shown
+  beside the Local tabs (`createWebWindow`, `isWeb`). Both kinds show a Local | Web switch beside the logo (`PlaceSwitch`, shown
   when the user agent has `MCPDocs/`) whose switch is an `mcpdocs://switch` link `main.js` catches (`handleAppLink`).
   Google sign-in in a Web tab runs in the system browser and comes back as `mcpdocs://signed-in?code=` traded at
   `/api/auth/handoff` (design in `docs/web-and-pdf.md`).

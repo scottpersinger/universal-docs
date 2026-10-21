@@ -21,7 +21,6 @@ import './styles.css';
 import { isPreview } from './components/FilePreviewFrame.tsx';
 import { useHistoryKeys } from './historyKeys.ts';
 import { useDesktopBridge, useRecentOpens } from './desktopBridge.ts';
-import { DesktopBanner } from './components/DesktopBanner.tsx';
 
 // A file's preview in the file list: the same page with only the file showing (styles.css, .file-preview-page).
 const PREVIEW = isPreview();
@@ -49,31 +48,28 @@ function AppShell() {
   useDesktopBridge(!!local && !!user && !PREVIEW);
   useRecentOpens(!!user && !PREVIEW);
   return (
-    <div className="app-frame">
-      {!PREVIEW && <DesktopBanner />}
-      <div className="app-shell">
-        <div className="app-main">
-          <Routes>
-            <Route path="/login" element={<GuestOnly><AuthPage mode="login" /></GuestOnly>} />
-            <Route path="/register" element={<GuestOnly><AuthPage mode="register" /></GuestOnly>} />
-            <Route path="/forgot" element={<GuestOnly><ForgotPasswordPage /></GuestOnly>} />
-            <Route path="/reset" element={<GuestOnly><ResetPasswordPage /></GuestOnly>} />
-            <Route path="/verify" element={<GuestOnly><VerifyEmailPage /></GuestOnly>} />
-            <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
-            <Route path="/s/:id" element={<RequireAuth><SpreadsheetPage /></RequireAuth>} />
-            <Route path="/d/:id" element={<RequireAuth><DeckPage /></RequireAuth>} />
-            <Route path="/doc/:id" element={<RequireAuth><DocPage /></RequireAuth>} />
-            <Route path="/md/:id" element={<RequireAuth><MarkdownPage /></RequireAuth>} />
-            <Route path="/f/:id" element={<RequireAuth><FilePage /></RequireAuth>} />
-            <Route path="/open" element={<RequireAuth><OpenLocalFile /></RequireAuth>} />
-            <Route path="/changes" element={<RequireAuth><ChangesPage /></RequireAuth>} />
-            <Route path="/connectors" element={<RequireAuth><ConnectorsPage /></RequireAuth>} />
-            <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
-        {user && open && !PREVIEW && <AgentPanel />}
+    <div className="app-shell">
+      <div className="app-main">
+        <Routes>
+          <Route path="/login" element={<GuestOnly><AuthPage mode="login" /></GuestOnly>} />
+          <Route path="/register" element={<GuestOnly><AuthPage mode="register" /></GuestOnly>} />
+          <Route path="/forgot" element={<GuestOnly><ForgotPasswordPage /></GuestOnly>} />
+          <Route path="/reset" element={<GuestOnly><ResetPasswordPage /></GuestOnly>} />
+          <Route path="/verify" element={<GuestOnly><VerifyEmailPage /></GuestOnly>} />
+          <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
+          <Route path="/s/:id" element={<RequireAuth><SpreadsheetPage /></RequireAuth>} />
+          <Route path="/d/:id" element={<RequireAuth><DeckPage /></RequireAuth>} />
+          <Route path="/doc/:id" element={<RequireAuth><DocPage /></RequireAuth>} />
+          <Route path="/md/:id" element={<RequireAuth><MarkdownPage /></RequireAuth>} />
+          <Route path="/f/:id" element={<RequireAuth><FilePage /></RequireAuth>} />
+          <Route path="/open" element={<RequireAuth><OpenLocalFile /></RequireAuth>} />
+          <Route path="/changes" element={<RequireAuth><ChangesPage /></RequireAuth>} />
+          <Route path="/connectors" element={<RequireAuth><ConnectorsPage /></RequireAuth>} />
+          <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </div>
+      {user && open && !PREVIEW && <AgentPanel />}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-do
 import { api, ApiError } from '../api.ts';
 import { useAuth } from '../auth.tsx';
 import { HomeIcon } from '../components/Logo.tsx';
+import { PlaceSwitch } from '../components/PlaceSwitch.tsx';
 
 export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
   const auth = useAuth();
@@ -97,6 +98,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
         <div className="auth-brand">
           <HomeIcon size={36} />
           <span>Universal Docs</span>
+          <PlaceSwitch />
         </div>
         <h1>{isLogin ? 'Sign in' : 'Create your account'}</h1>
         {auth.googleLogin && (

@@ -1624,63 +1624,33 @@ textarea {
 }
 
 /* ------------------------------------------------------------------ Assistant panel */
-.app-frame {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
 .app-shell {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  height: 100%;
 }
-
-/* The desktop app's Local/Web banner (components/DesktopBanner.tsx). */
-.desktop-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-  height: 28px;
-  padding: 0 12px;
-  font-size: 12px;
-  border-bottom: 1px solid var(--border);
-  background: #eef3f8;
-  color: var(--muted);
-}
-.desktop-banner-web {
-  background: #eaf4ec;
-}
-.desktop-banner-kind {
-  font-weight: 600;
-  color: var(--text);
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.06);
-}
-.desktop-banner-where {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.desktop-banner-switch {
-  flex-shrink: 0;
-  color: #1a73e8;
-  text-decoration: none;
+/* Local | Web beside the logo in the desktop app (components/PlaceSwitch.tsx). */
+.place-switch {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--chrome);
+  font-size: 13px;
   font-weight: 500;
 }
-.desktop-banner-switch:hover {
-  text-decoration: underline;
+.place-switch > * {
+  padding: 3px 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  text-decoration: none;
 }
-@media print {
-  .desktop-banner {
-    display: none;
-  }
-  .app-frame {
-    height: auto;
-  }
+.place-switch > a:hover {
+  color: var(--text);
+}
+.place-switch > .active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 .app-main {
   flex: 1;

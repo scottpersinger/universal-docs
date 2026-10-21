@@ -77,10 +77,10 @@ const frontServer = () => serverOf(BrowserWindow.getFocusedWindow()) ?? serverOf
 // --- Web tabs ------------------------------------------------------------------------------------------------
 // A Web tab is the hosted app (UNIVERSAL_WEB_URL), with a session of its own kept on disk, so web cookies and
 // the folders' tokens never mix and the person stays signed in. The page gets nothing of the app's: it talks
-// to the app only through mcpdocs:// links (the banner's switch), which the app catches before they load.
+// to the app only through mcpdocs:// links (the Local | Web switch), which the app catches before they load.
 const WEB_URL = (process.env.UNIVERSAL_WEB_URL || 'https://docs.freeflow.im').replace(/\/$/, '');
 const WEB_ORIGIN = new URL(WEB_URL).origin;
-/** Added to the pages' user agent, so the client knows it is in the app and shows the Local/Web banner (DesktopBanner). */
+/** Added to the pages' user agent, so the client knows it is in the app and shows the Local | Web switch (PlaceSwitch). */
 const UA_MARK = 'MCPDocs/1';
 let webSession = null;
 const webWindows = new Set();
@@ -459,7 +459,7 @@ const sameFrame = (a, b) => {
 };
 
 /**
- * The banner's switch (client/src/components/DesktopBanner.tsx): to a tab of the other kind in this window,
+ * The Local | Web switch (client/src/components/PlaceSwitch.tsx): to a tab of the other kind in this window,
  * else the one last in front anywhere, else a new tab of that kind here (the folder last open, for Local).
  */
 async function switchTo(kind, from) {
@@ -489,7 +489,7 @@ async function signOutOfWeb() {
 }
 
 /**
- * An mcpdocs:// link: the banner's switch (from a page of the app), or the code a Google sign-in in the system
+ * An mcpdocs:// link: the Local | Web switch (from a page of the app), or the code a Google sign-in in the system
  * browser hands back (from the system), traded for the Web tab's session (/api/auth/handoff).
  */
 function handleAppLink(link, from = null) {

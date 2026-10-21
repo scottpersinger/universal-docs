@@ -21,6 +21,7 @@ import { csvTitle } from '../../../shared/csv.ts';
 import { cleanFolderPath, folderTrail } from '../../../shared/folders.ts';
 import { markdownTitle } from '../../../shared/markdown.ts';
 import { appName } from '../brand.ts';
+import { PlaceSwitch } from '../components/PlaceSwitch.tsx';
 import { downloadPdf } from '../print.ts';
 
 const pathOf = (s: LibraryItem) => (s.kind === 'deck' ? `/d/${s.id}` : s.kind === 'doc' ? `/doc/${s.id}` : s.kind === 'markdown' ? `/md/${s.id}` : s.kind === 'file' ? `/f/${s.id}` : `/s/${s.id}`);
@@ -307,6 +308,7 @@ export function HomePage() {
         <>
           <HomeIcon />
           <span>{appName()}</span>
+          <PlaceSwitch />
         </>
       }
       listTitle={local ? <span title={local.dir}>{dirName(local.dir)}</span> : undefined}
