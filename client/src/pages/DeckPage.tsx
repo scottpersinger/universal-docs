@@ -30,6 +30,9 @@ import { useFavicon } from '../favicon.ts';
 import { DeckToolbar, LAYOUT_NAMES, shapeMenuItems, tableMenuItems } from '../deck/DeckToolbar.tsx';
 import { downloadPptx } from '../deck/pptx.ts';
 import { copyPicture } from '../deck/copyPicture.ts';
+import { FindBox, FindToggle } from '../find/FindBox.tsx';
+import { isFindKey } from '../find/find.ts';
+import { clearMatches, paintMatches, rangesIn } from '../find/highlights.ts';
 import { VideoDialog } from '../components/VideoDialog.tsx';
 import { SheetTableDialog } from '../deck/SheetTableDialog.tsx';
 import { SheetChartDialog } from '../deck/SheetChartDialog.tsx';
@@ -234,6 +237,29 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
     },
     [ctl, notify],
   );
+
+  // ⌘F opens the presentation's find bar instead of the browser's page search, wherever the focus is.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isFindKey(e) || ctl.presenting) return;
+      e.preventDefault();
+      ctl.openFind();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [ctl]);
+  // The matches on the slide shown are highlighted where it is drawn, the one shown standing out. After every
+  // redraw: the slide's text may have changed.
+  useEffect(() => {
+    const f = ctl.find;
+    const canvas = bodyRef.current?.querySelector('.deck-main .deck-canvas');
+    if (!f?.query || !canvas) return clearMatches();
+    const ranges = rangesIn(canvas, f.query, f.matchCase);
+    const hit = ctl.findMatches()[f.current];
+    const el = hit && hit.slide === ctl.current ? canvas.querySelector(`[data-el="${CSS.escape(hit.el)}"]`) : null;
+    paintMatches(ranges, (el && ranges.filter((r) => el.contains(r.startContainer))[hit!.n]) ?? null);
+    return clearMatches;
+  });
 
   // Copy: the selected elements for pasting here, and a single picture onto the system clipboard as well. A paste
   // is of the elements copied here, unless the window has lost focus since (something may have been copied in
@@ -462,6 +488,8 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         { label: 'Undo', shortcut: `${MOD}Z`, disabled: !ctl.store.canUndo(), action: () => ctl.undo() },
         { label: 'Redo', shortcut: `${MOD}Y`, disabled: !ctl.store.canRedo(), action: () => ctl.redo() },
         'sep',
+        { label: 'Find…', shortcut: `${MOD}F`, action: () => ctl.openFind() },
+        'sep',
         { label: 'Copy', shortcut: `${MOD}C`, disabled: !ctl.selection.length, action: copy },
         { label: 'Paste', shortcut: `${MOD}V`, action: () => ctl.paste() },
         { label: 'Duplicate', shortcut: `${MOD}D`, action: () => (ctl.selection.length ? ctl.duplicateSelected() : ctl.duplicateSlide()) },
@@ -625,6 +653,23 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
             <div className="deck-main">
               <DeckEditor ctl={ctl} onImageFiles={(files) => void addImageFiles(files)} onEditImage={setEditingImage} onContextMenu={(at) => setCtxMenu(at)} />
               {showNotes && <NotesPane ctl={ctl} />}
+              {ctl.find && (
+                <FindBox
+                  query={ctl.find.query}
+                  onQuery={(query) => ctl.setFind({ query })}
+                  count={ctl.findMatches().length}
+                  current={ctl.find.current}
+                  onStep={(dir) => ctl.findStep(dir)}
+                  onClose={() => ctl.closeFind()}
+                  focusSeq={ctl.find.focusSeq}
+                  placeholder="Find in slides"
+                  label="Find in presentation"
+                >
+                  <FindToggle on={ctl.find.matchCase} title="Match case" onClick={() => ctl.setFind({ matchCase: !ctl.find!.matchCase })}>
+                    Aa
+                  </FindToggle>
+                </FindBox>
+              )}
             </div>
           </div>
         </>

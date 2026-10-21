@@ -1,6 +1,8 @@
 // Editor state for an open presentation: the current slide, selected and edited elements, clipboard, and
 // the operations the toolbar, menus, keyboard and the assistant's deck tools use.
 import { useSyncExternalStore } from 'react';
+import { deckMatches, type DeckMatch } from '../find/deckFind.ts';
+import { stepIndex, type FindState } from '../find/find.ts';
 import {
   buildSlide,
   layoutElements,
@@ -95,6 +97,58 @@ export class DeckController {
 
   get deck(): Deck {
     return this.store.deck;
+  }
+
+  // --- Find -------------------------------------------------------------------------
+
+  /** The find bar, while it is open (⌘F). The page highlights the matches on the slide shown. */
+  find: FindState | null = null;
+  private findCache: { deck: Deck; query: string; matchCase: boolean; hits: DeckMatch[] } | null = null;
+
+  openFind(): void {
+    this.find = this.find ? { ...this.find, focusSeq: this.find.focusSeq + 1 } : { query: '', matchCase: false, current: -1, focusSeq: 1 };
+    this.emit();
+  }
+
+  closeFind(): void {
+    if (!this.find) return;
+    this.find = null;
+    this.emit();
+  }
+
+  /** The matches in every slide (cached for each version of the deck). */
+  findMatches(): DeckMatch[] {
+    const f = this.find;
+    if (!f?.query) return [];
+    const c = this.findCache;
+    if (c && c.deck === this.deck && c.query === f.query && c.matchCase === f.matchCase) return c.hits;
+    const hits = deckMatches(this.deck, f.query, f.matchCase);
+    this.findCache = { deck: this.deck, query: f.query, matchCase: f.matchCase, hits };
+    return hits;
+  }
+
+  /** A new query or case: shows the first match on this slide or after it. */
+  setFind(patch: Partial<Pick<FindState, 'query' | 'matchCase'>>): void {
+    if (!this.find) return;
+    this.find = { ...this.find, ...patch, current: -1 };
+    const hits = this.findMatches();
+    const at = hits.findIndex((h) => h.slide >= this.current);
+    this.showMatch(hits.length ? (at < 0 ? 0 : at) : -1);
+  }
+
+  findStep(dir: 1 | -1): void {
+    if (!this.find) return;
+    this.showMatch(stepIndex(this.find.current, this.findMatches().length, dir));
+  }
+
+  /** Go to the match's slide and select the element it is in. */
+  private showMatch(i: number): void {
+    if (!this.find) return;
+    this.find = { ...this.find, current: i };
+    const hit = this.findMatches()[i];
+    if (!hit) return this.emit();
+    if (hit.slide !== this.current) this.goTo(hit.slide);
+    this.select([hit.el]);
   }
 
   get slide(): Slide {

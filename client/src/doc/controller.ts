@@ -13,6 +13,8 @@ import { AutoSaver, TransactionRefused } from '../state/store.ts';
 import { autoLinkOnEnter, autoLinkRule } from './autolink.ts';
 import { paginationOf, paginationPlugin, type Pagination } from './pagination.ts';
 import { CLOSE_HISTORY_META, DocStore } from './store.ts';
+import { docMatches, type DocMatch } from '../find/docFind.ts';
+import { stepIndex, type FindState } from '../find/find.ts';
 
 const s = docSchema;
 const n = s.nodes;
@@ -33,6 +35,9 @@ export class DocController {
   /** How many times replaceWith brought in a version saved elsewhere (the page can tell the user). */
   externalChanges = 0;
   version = 0;
+  /** The find bar, while it is open (⌘F); its matches are drawn as decorations by the editor. */
+  find: FindState | null = null;
+  private findCache: { doc: PMNode; query: string; matchCase: boolean; hits: DocMatch[] } | null = null;
   private view: EditorView | null = null;
   private listeners = new Set<() => void>();
 
@@ -637,6 +642,66 @@ export class DocController {
   /** Mark the next transaction as a separate undo step. */
   separateStep(tr: Transaction): Transaction {
     return tr.setMeta(CLOSE_HISTORY_META, true);
+  }
+
+  // --- Find ---------------------------------------------------------------------------
+
+  openFind(): void {
+    this.find = this.find ? { ...this.find, focusSeq: this.find.focusSeq + 1 } : { query: '', matchCase: false, current: -1, focusSeq: 1 };
+    this.emit();
+  }
+
+  /** Close the find bar; the match shown is selected in the text, ready to type over or copy. */
+  closeFind(): void {
+    if (!this.find) return;
+    const hit = this.findMatches()[this.find.current];
+    this.find = null;
+    if (hit && this.view) this.view.dispatch(this.state.tr.setSelection(TextSelection.create(this.doc, hit.from, hit.to)));
+    else this.view?.updateState(this.state);
+    this.emit();
+    this.focus();
+  }
+
+  /** The matches of the find bar's query (cached for each version of the document). */
+  findMatches(): DocMatch[] {
+    const f = this.find;
+    if (!f?.query) return [];
+    const c = this.findCache;
+    if (c && c.doc === this.doc && c.query === f.query && c.matchCase === f.matchCase) return c.hits;
+    const hits = docMatches(this.doc, f.query, f.matchCase);
+    this.findCache = { doc: this.doc, query: f.query, matchCase: f.matchCase, hits };
+    return hits;
+  }
+
+  /** A new query or case: shows the first match at or after the cursor. */
+  setFind(patch: Partial<Pick<FindState, 'query' | 'matchCase'>>): void {
+    if (!this.find) return;
+    this.find = { ...this.find, ...patch, current: -1 };
+    const hits = this.findMatches();
+    const at = hits.findIndex((h) => h.from >= this.state.selection.from);
+    this.showMatch(hits.length ? (at < 0 ? 0 : at) : -1);
+  }
+
+  findStep(dir: 1 | -1): void {
+    if (!this.find) return;
+    this.showMatch(stepIndex(this.find.current, this.findMatches().length, dir));
+  }
+
+  private showMatch(i: number): void {
+    if (!this.find) return;
+    this.find = { ...this.find, current: i };
+    // The decorations are redrawn with the state; the match shown is scrolled to.
+    this.view?.updateState(this.state);
+    this.emit();
+    const el = this.view?.dom.querySelector('.find-current');
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** The find bar's matches as decorations, the one shown marked. */
+  findDecorations(): { from: number; to: number; current: boolean }[] {
+    const f = this.find;
+    if (!f) return [];
+    return this.findMatches().map((h, i) => ({ ...h, current: i === f.current }));
   }
 
   // --- For the assistant --------------------------------------------------------------

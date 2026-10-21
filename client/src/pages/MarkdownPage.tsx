@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { FolderCrumbs, lastListingHref } from '../components/FolderCrumbs.tsx';
 import { markdownTitle, type MarkdownDoc } from '../../../shared/markdown.ts';
@@ -19,6 +19,10 @@ import { MarkdownController, useMarkdownController } from '../markdown/controlle
 import { MarkdownEditor, replaceRange, wrapSelection } from '../markdown/MarkdownEditor.tsx';
 import { MarkdownPreview } from '../markdown/MarkdownPreview.tsx';
 import { MARKDOWN_PREVIEW } from '../panelSize.ts';
+import { FindBox, FindToggle } from '../find/FindBox.tsx';
+import { findAll, stepIndex, useFind } from '../find/find.ts';
+import { clearMatches, paintMatches, rangesIn } from '../find/highlights.ts';
+import { TextareaMatches } from '../markdown/TextareaMatches.tsx';
 import { appName } from '../brand.ts';
 
 // Diagrams in the preview: Mermaid is fetched when a document first has one.
@@ -150,6 +154,36 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
 
   useEffect(() => ctl.saver.subscribe(() => setSaveTick((t) => t + 1)), [ctl]);
 
+  // Find (⌘F): the matches in the text, marked over the editor and in the preview.
+  const finder = useFind();
+  const find = finder.find;
+  const starts = useMemo(() => (find ? findAll(ctl.text, find.query, find.matchCase) : []), [find, ctl.text]);
+  const current = find && find.current < starts.length ? find.current : -1;
+  const searchFor = (patch: { query?: string; matchCase?: boolean }) => {
+    if (!find) return;
+    const next = { ...find, ...patch };
+    const hits = findAll(ctl.text, next.query, next.matchCase);
+    // The first match at or after the cursor.
+    const from = editorRef.current?.selectionStart ?? 0;
+    const at = hits.findIndex((h) => h >= from);
+    finder.set({ ...patch, current: hits.length ? (at < 0 ? 0 : at) : -1 });
+  };
+  const closeFind = () => {
+    const ta = editorRef.current;
+    const at = current >= 0 ? starts[current] : -1;
+    finder.close();
+    if (!ta) return;
+    // The match shown is selected, ready to type over.
+    ta.focus();
+    if (at >= 0 && find) ta.setSelectionRange(at, at + find.query.length);
+  };
+  useEffect(() => {
+    const root = previewRef.current;
+    if (!find?.query || !root) return clearMatches();
+    paintMatches(rangesIn(root, find.query, find.matchCase), null);
+    return clearMatches;
+  }, [find, ctl.text, showPreview]);
+
   useEffect(() => {
     document.title = `${meta.title} - ${appName()}`;
     return () => {
@@ -248,6 +282,8 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
       key: 'view',
       label: 'View',
       items: () => [
+        { label: 'Find…', shortcut: `${MOD}F`, action: () => finder.open() },
+        'sep',
         { label: 'Preview', checked: showPreview, action: () => setShowPreview(!showPreview) },
         { label: 'Reset preview width', disabled: !showPreview, action: () => preview.set(preview.spec.def, true) },
       ],
@@ -356,6 +392,24 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
       <div className="md-body-row" ref={rowRef}>
         <div className="md-editor-col">
           <MarkdownEditor ctl={ctl} editorRef={editorRef} previewRef={previewRef} />
+          {find?.query && <TextareaMatches textareaRef={editorRef} text={ctl.text} starts={starts} length={find.query.length} current={current} />}
+          {find && (
+            <FindBox
+              query={find.query}
+              onQuery={(query) => searchFor({ query })}
+              count={starts.length}
+              current={current}
+              onStep={(dir) => finder.set({ current: stepIndex(current, starts.length, dir) })}
+              onClose={closeFind}
+              focusSeq={find.focusSeq}
+              placeholder="Find in text"
+              label="Find in Markdown"
+            >
+              <FindToggle on={find.matchCase} title="Match case" onClick={() => searchFor({ matchCase: !find.matchCase })}>
+                Aa
+              </FindToggle>
+            </FindBox>
+          )}
         </div>
         {showPreview && (
           <>

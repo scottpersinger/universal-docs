@@ -8,4 +8,5 @@
 - Slides embedding support: images, videos, HTML pages, PDF
 - PDF signing support, plus ad-hoc editing
 - Image editing: remove background, composting, etc...
+- JSON viewer and editor
 - Open multiple folders and files

@@ -1401,6 +1401,21 @@ textarea {
   margin: 0 4px;
 }
 
+/* Matches of the other editors' find bars: highlighted where the page draws text (find/highlights.ts), and in a
+   document as decorations. */
+::highlight(find-hit) {
+  background-color: #fde293;
+}
+::highlight(find-current) {
+  background-color: #f9ab00;
+}
+.find-hit {
+  background-color: #fde293;
+}
+.find-hit.find-current {
+  background-color: #f9ab00;
+}
+
 /* Branches */
 .tree-indent {
   display: inline-block;
@@ -2443,6 +2458,8 @@ button.agent-tool-label:hover {
   flex-direction: column;
   min-width: 0;
   gap: 8px;
+  /* The find bar sits over its corner. */
+  position: relative;
 }
 /* The canvas and the zoom controls over its corner, which stay put while a zoomed-in slide scrolls. */
 .deck-canvas-frame {
@@ -4455,6 +4472,25 @@ button.agent-tool-label:hover {
   min-width: 0;
   min-height: 0;
   display: flex;
+  position: relative;
+}
+/* The find bar's matches over the textarea (TextareaMatches): its text invisible, only the marks shown. */
+.md-find-layer {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  box-sizing: border-box;
+}
+.md-find-layer mark {
+  color: transparent;
+  background: rgba(253, 226, 147, 0.7);
+  border-radius: 2px;
+}
+.md-find-layer mark.find-current {
+  background: rgba(249, 171, 0, 0.55);
 }
 .md-editor {
   flex: 1;
@@ -4793,6 +4829,7 @@ button.agent-tool-label:hover {
 
 /* A JSON file as a tree (JsonViewer). */
 .json-view {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;

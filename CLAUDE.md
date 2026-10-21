@@ -179,6 +179,11 @@ type stripping; imports use `.ts` extensions.
   copy goes in the trash) and Save a copy makes `<name>-signed.pdf`. The signature is drawn, typed or uploaded in
   `SignatureDialog` (signature_pad); a user keeps several, picked from the Sign menu (`server/signatures.ts`,
   `/api/settings/signatures`; in the desktop app in its settings database).
+- Find (⌘F) in the editors other than the spreadsheet's (`state/search.ts`, `FindBar`) is `client/src/find`: one find bar
+  (`FindBox`, which `FindBar` also uses), matches in a document as ProseMirror decorations (`docFind.ts`, `DocController.find`),
+  in a presentation's slides by element (`deckFind.ts`, `DeckController.find`), in Markdown over the textarea
+  (`TextareaMatches`) and in the preview, and in the JSON tree; text the page draws is highlighted with the CSS Custom
+  Highlight API (`highlights.ts`). PDFs have none of their own yet (the browser's viewer).
 - A stored file that is plain text (`StoredFile.text`) is edited as text on its page (`TextFileEditor`); a JSON file
   is shown as a tree first (`JsonViewer`: all open, Collapse all / Expand all, each object or array on its own; a very
   large one opens only its top levels), with Edit for the text.

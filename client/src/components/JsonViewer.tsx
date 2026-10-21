@@ -1,7 +1,10 @@
 // A JSON file shown as a tree: every object and array open at first (a very large file only its top levels), each
 // one closed and opened again with its triangle, and Collapse all / Expand all for the whole file. A file that is not
 // valid JSON says what is wrong, and offers the text editor. FilePage shows it for a .json file; Edit there is the text editor.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FindBox, FindToggle } from '../find/FindBox.tsx';
+import { findAll, stepIndex, useFind } from '../find/find.ts';
+import { clearMatches, paintMatches, rangesIn, scrollToRange } from '../find/highlights.ts';
 import type { StoredFile } from '../../../shared/types.ts';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -28,6 +31,23 @@ export function containers(value: Json, depth = 0): { paths: string[]; count: nu
   };
   walk(value, '', 0);
   return { paths, count };
+}
+
+/** The objects and arrays (by path) holding a key or value whose text, as the tree shows it, has the query in it. */
+export function containersWith(value: Json, query: string, matchCase: boolean): Set<string> {
+  const out = new Set<string>();
+  const has = (text: string) => findAll(text, query, matchCase).length > 0;
+  const walk = (v: Json, path: string): boolean => {
+    if (!isContainer(v)) return has(v === null ? 'null' : typeof v === 'string' ? JSON.stringify(v) : String(v));
+    let found = false;
+    for (const [k, child] of Array.isArray(v) ? v.map((c, i) => [i, c] as const) : Object.entries(v)) {
+      if (walk(child, childPath(path, k)) || (!Array.isArray(v) && has(JSON.stringify(k)))) found = true;
+    }
+    if (found) out.add(path);
+    return found;
+  };
+  if (query) walk(value, '');
+  return out;
 }
 
 function Scalar({ value }: { value: Json }) {
@@ -145,6 +165,31 @@ export function JsonViewer({ file, onEdit }: { file: StoredFile; /** Edit the fi
       return next;
     });
 
+  // Find (⌘F): searching opens the objects and arrays with matches in them, and the matches are found in the tree
+  // as drawn (the sizes of closed ones left out).
+  const finder = useFind(!!parsed && 'value' in parsed);
+  const find = finder.find;
+  useEffect(() => {
+    if (!find?.query || !parsed || !('value' in parsed)) return;
+    const holding = containersWith(parsed.value, find.query, find.matchCase);
+    setClosed((cur) => (cur.size && [...holding].some((p) => cur.has(p)) ? new Set([...cur].filter((p) => !holding.has(p))) : cur));
+  }, [find?.query, find?.matchCase, parsed]);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [ranges, setRanges] = useState<Range[]>([]);
+  useLayoutEffect(() => {
+    const root = treeRef.current;
+    setRanges(find?.query && root ? rangesIn(root, find.query, find.matchCase, '.json-size, .json-more, .json-bar') : []);
+  }, [find?.query, find?.matchCase, closed, parsed]);
+  const current = find && find.current < ranges.length ? find.current : -1;
+  useEffect(() => {
+    if (!ranges.length) return clearMatches();
+    paintMatches(ranges, current >= 0 ? ranges[current] : null);
+    return clearMatches;
+  }, [ranges, current]);
+  useEffect(() => {
+    if (current >= 0 && ranges[current]) scrollToRange(ranges[current]);
+  }, [current, ranges]);
+
   if (error) return <div className="form-error">{error}</div>;
   if (!parsed) return <div className="muted text-file-wait">Loading…</div>;
   if ('problem' in parsed)
@@ -170,7 +215,24 @@ export function JsonViewer({ file, onEdit }: { file: StoredFile; /** Edit the fi
           </button>
         )}
       </div>
-      <div className="json-tree" aria-label={file.filename}>
+      {find && (
+        <FindBox
+          query={find.query}
+          onQuery={(query) => finder.set({ query, current: 0 })}
+          count={ranges.length}
+          current={current}
+          onStep={(dir) => finder.set({ current: stepIndex(current, ranges.length, dir) })}
+          onClose={finder.close}
+          focusSeq={find.focusSeq}
+          placeholder="Find in JSON"
+          label="Find in JSON"
+        >
+          <FindToggle on={find.matchCase} title="Match case" onClick={() => finder.set({ matchCase: !find.matchCase, current: 0 })}>
+            Aa
+          </FindToggle>
+        </FindBox>
+      )}
+      <div className="json-tree" aria-label={file.filename} ref={treeRef}>
         <Node value={parsed.value} path="" last closed={closed} toggle={toggle} />
       </div>
     </div>

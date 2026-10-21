@@ -18,6 +18,8 @@ import { ImageEditDialog } from '../image/ImageEditDialog.tsx';
 const loadBackgroundRemoval = () => import('@imgly/background-removal');
 import type { PictureSizes } from '../image/ImageFileEditor.tsx';
 import { MOD } from '../commands.ts';
+import { FindBox, FindToggle } from '../find/FindBox.tsx';
+import { isFindKey } from '../find/find.ts';
 import { DocIcon } from '../components/Logo.tsx';
 import { MenuList, type MenuItem } from '../components/Menu.tsx';
 import { ConfirmModal, PromptModal } from '../components/Modal.tsx';
@@ -182,6 +184,16 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => ctl.saver.subscribe(() => setSaveTick((t) => t + 1)), [ctl]);
+  // ⌘F opens the document's find bar instead of the browser's page search, wherever the focus is.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isFindKey(e)) return;
+      e.preventDefault();
+      ctl.openFind();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [ctl]);
   // The size the pages are drawn at, which the zoom controls show and step from (fitting can land between levels).
   const [pageScale, setPageScale] = useState(1);
   const zoomOut = [...ZOOMS].reverse().find((z) => z < pageScale * 100 - 0.5);
@@ -364,6 +376,8 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
       items: () => [
         { label: 'Undo', shortcut: `${MOD}Z`, disabled: !ctl.store.canUndo(), action: () => ctl.undo() },
         { label: 'Redo', shortcut: `${MOD}Y`, disabled: !ctl.store.canRedo(), action: () => ctl.redo() },
+        'sep',
+        { label: 'Find…', shortcut: `${MOD}F`, action: () => ctl.openFind() },
         'sep',
         { label: 'Clear formatting', action: () => ctl.clearFormatting() },
         'sep',
@@ -561,6 +575,23 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
         >
           <DocEditor ctl={ctl} readOnly={office.locked} onImageFiles={(files) => void addImageFiles(files)} onScale={setPageScale} onEditImage={editImage} />
         </div>
+        {ctl.find && (
+          <FindBox
+            query={ctl.find.query}
+            onQuery={(query) => ctl.setFind({ query })}
+            count={ctl.findMatches().length}
+            current={ctl.find.current}
+            onStep={(dir) => ctl.findStep(dir)}
+            onClose={() => ctl.closeFind()}
+            focusSeq={ctl.find.focusSeq}
+            placeholder="Find in document"
+            label="Find in document"
+          >
+            <FindToggle on={ctl.find.matchCase} title="Match case" onClick={() => ctl.setFind({ matchCase: !ctl.find!.matchCase })}>
+              Aa
+            </FindToggle>
+          </FindBox>
+        )}
         {/* Pages have a size to zoom; a pageless document always fills the window. */}
         {ctl.pageSetup().mode === 'pages' && (
           <ZoomControls

@@ -410,10 +410,12 @@ export function DocEditor({ ctl, onImageFiles, onScale, onEditImage, readOnly = 
       plugins: [dropCursor({ color: '#1a73e8', width: 2 }), gapCursor()],
       nodeViews: { image: (node, v, getPos) => new ImageView(node, v, getPos, () => editRef.current?.()), video: (node, v, getPos) => new VideoView(node, v, getPos) },
       // While the prompt to the assistant has the focus the browser draws no cursor or selection here, so draw them.
+      // The find bar's matches are drawn too (find/docFind.ts).
       decorations: (state) => {
         const sel = state.selection;
-        if (!ctl.assistantOpen || !(sel instanceof TextSelection)) return null;
-        return DecorationSet.create(state.doc, [sel.empty ? Decoration.widget(sel.from, heldCaret, { key: 'held-caret' }) : Decoration.inline(sel.from, sel.to, { class: 'doc-held-selection' })]);
+        const decos = ctl.findDecorations().map((m) => Decoration.inline(m.from, m.to, { class: m.current ? 'find-hit find-current' : 'find-hit' }));
+        if (ctl.assistantOpen && sel instanceof TextSelection) decos.push(sel.empty ? Decoration.widget(sel.from, heldCaret, { key: 'held-caret' }) : Decoration.inline(sel.from, sel.to, { class: 'doc-held-selection' }));
+        return decos.length ? DecorationSet.create(state.doc, decos) : null;
       },
       attributes: (state) => ({ class: 'doc-content', spellcheck: 'true', 'aria-label': 'Document text', style: docStyleCss(docStyleOf(state.doc)) }),
       handlePaste: (_v, event) => {
