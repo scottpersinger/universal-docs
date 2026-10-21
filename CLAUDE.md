@@ -114,6 +114,11 @@ type stripping; imports use `.ts` extensions.
   (`POST /api/local/open`) has the server ask `main.js` (a message to its parent) to open the file's own
   folder instead; the new window starts at `/open?file=…&from=recents` (`pages/OpenLocalFile.tsx`), which
   finds the file (`GET /api/local/resolve`) and makes Recents the first breadcrumb (`client/src/listing.ts`).
+  A window may instead be a Web tab: the hosted app (`UNIVERSAL_WEB_URL`) in a session of its own (`persist:web`),
+  beside the Local tabs (`createWebWindow`, `isWeb`). Both kinds show a Local/Web banner (`DesktopBanner`, shown
+  when the user agent has `MCPDocs/`) whose switch is an `mcpdocs://switch` link `main.js` catches (`handleAppLink`).
+  Google sign-in in a Web tab runs in the system browser and comes back as `mcpdocs://signed-in?code=` traded at
+  `/api/auth/handoff` (design in `docs/web-and-pdf.md`).
   The folder button left of the open folder's name (`LocalFolderMenu`) offers Open Folder… (`POST /api/local/choose-folder`,
   `main.js`'s dialog) and Open file by path… (`POST /api/local/open-path`: a file or folder, absolute, `~/` or
   relative to the open folder; one outside it has `main.js` open it, or the file's own folder).

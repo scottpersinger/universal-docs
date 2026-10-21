@@ -1,6 +1,7 @@
 # The web in the desktop app, and Download as PDF
 
-Status: phases 1 (Download as PDF) and 2 (`export_pdf`) are built; the rest is design. Phase 1 came first because it stands on its
+Status: phases 1 (Download as PDF), 2 (`export_pdf`) and 3 (Web tabs) are built, except registering the desktop
+as a device, which waits for phase 5; the rest is design. Phase 1 came first because it stands on its
 own in the hosted app and the desktop's "keep updated" PDFs depend on it. Decisions still open are listed at
 the end.
 
@@ -137,12 +138,22 @@ that tries to reach this machine prints without reaching it.
   follow the last Local tab used, and closing the last Local tab of a folder still stops its server.
 - Without native tabs (Windows, Linux) Web is a window of its own, until the app has a tab strip of its own.
 
+As built: `UNIVERSAL_WEB_URL` (default `https://docs.freeflow.im`) is the hosted app. Both sessions add
+`MCPDocs/1` to the user agent, which is how the client knows to show the banner (`DesktopBanner`); a page in
+a Local tab knows it is local from `/api/auth/me`. The banner's switch is an `mcpdocs://switch?to=web|local`
+link that `main.js` catches in `will-navigate` (`switchTo`), so the hosted page is given no IPC. A tab of the
+other kind "in this window" is one with the same frame (macOS tabs share it), else the one last in front
+(`recent`). File › Open Web Tab and File › Sign Out of Web are in the menu.
+
 ### Signing in
 
 Only when a Web tab is first opened, never at start. Signed out, the Web tab shows the hosted app's sign-in
 page with Sign in and Create account. Email and password sign in inside the tab. Google refuses to sign in
-inside an embedded browser, so Continue with Google opens the system browser and hands the session back to
-the app through its link (`mcpdocs://`, below). The session is kept in the partition, so the app stays
+inside an embedded browser, so Continue with Google opens the system browser (`main.js` catches the
+navigation to `/api/auth/google/start` and adds `desktop=1`). After Google, the callback gives that browser
+no session but a page that opens `mcpdocs://signed-in?code=…`, a one-time code good for two minutes; the app
+(`open-url`) loads `/api/auth/handoff?code=…` in its Web tab, which sets the tab's session. The installed app
+declares the scheme (`build.protocols`); a copy run from a clone registers it only with `MCPDOCS_SCHEME=1`. The session is kept in the partition, so the app stays
 signed in; the app menu has Sign out of Web. When the desktop signs in it registers as a device (its name is
 the computer's), which the hosted app shows and can remove.
 

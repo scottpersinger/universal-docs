@@ -105,6 +105,14 @@
   "build": {
     "appId": "im.freeflow.docs",
     "productName": "MCP Docs",
+    "protocols": [
+      {
+        "name": "MCP Docs",
+        "schemes": [
+          "mcpdocs"
+        ]
+      }
+    ],
     "directories": {
       "output": "release"
     },

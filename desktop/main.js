@@ -1,6 +1,7 @@
 // The desktop app (Electron). It opens a folder as the library: the folder given on the command line, or
 // the directory the app was started in. The app itself is the web app, served to this window by a local
-// server (desktop/server.ts) that reads and writes the folder's files.
+// server (desktop/server.ts) that reads and writes the folder's files. A window may instead be a Web tab: the
+// hosted Universal Docs, signed in to the person's account (docs/web-and-pdf.md).
 import { app, BrowserWindow, clipboard, dialog, Menu, session, shell } from 'electron';
 import { execFile, fork } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -64,10 +65,26 @@ const starting = new Map();
 const windowServers = new Map();
 /** The window last in front: what the menu, Finder and agents act on. */
 let front = null;
+/** The windows in the order they were last in front, the most recent last. */
+let recent = [];
 
 const serverOf = (win) => (win && !win.isDestroyed() ? windowServers.get(win.id) : undefined);
-/** The server of the window in front; agents' MCP requests go to it. */
-const frontServer = () => serverOf(BrowserWindow.getFocusedWindow()) ?? serverOf(front) ?? servers.values().next().value ?? null;
+/** The window last in front that `pred` accepts. */
+const lastWindow = (pred) => [...recent].reverse().find((w) => !w.isDestroyed() && pred(w)) ?? null;
+/** The server of the window in front, else of the Local tab last in front; agents' MCP requests go to it. */
+const frontServer = () => serverOf(BrowserWindow.getFocusedWindow()) ?? serverOf(front) ?? serverOf(lastWindow((w) => !!serverOf(w))) ?? servers.values().next().value ?? null;
+
+// --- Web tabs ------------------------------------------------------------------------------------------------
+// A Web tab is the hosted app (UNIVERSAL_WEB_URL), with a session of its own kept on disk, so web cookies and
+// the folders' tokens never mix and the person stays signed in. The page gets nothing of the app's: it talks
+// to the app only through mcpdocs:// links (the banner's switch), which the app catches before they load.
+const WEB_URL = (process.env.UNIVERSAL_WEB_URL || 'https://docs.freeflow.im').replace(/\/$/, '');
+const WEB_ORIGIN = new URL(WEB_URL).origin;
+/** Added to the pages' user agent, so the client knows it is in the app and shows the Local/Web banner (DesktopBanner). */
+const UA_MARK = 'MCPDocs/1';
+let webSession = null;
+const webWindows = new Set();
+const isWeb = (win) => !!win && !win.isDestroyed() && webWindows.has(win);
 
 /** The window to show something of `server` in: the one in front when it is that server's, else one of its own. */
 function windowFor(server) {
@@ -93,6 +110,7 @@ function attach(win, server) {
 function detach(id, win) {
   const server = windowServers.get(id);
   windowServers.delete(id);
+  recent = recent.filter((w) => w !== win);
   if (front === win) front = null;
   if (!server) return;
   server.windows.delete(win);
@@ -383,18 +401,115 @@ async function startServer(dir) {
 const TABS = 'freeflow';
 const WINDOW_OPTIONS = { width: 1400, height: 900, title: 'MCP Docs', tabbingIdentifier: TABS };
 
+/** A window's title says which kind of tab it is (native tabs show only titles): "Proposal — Local". */
+function titled(win, kind) {
+  win.on('page-title-updated', (e, title) => {
+    e.preventDefault();
+    // index.html is titled with the hosted app's name until the page learns it is this app (client/src/brand.ts).
+    if (kind === 'Local' && title === 'Universal Docs') return;
+    win.setTitle(`${title.replace(/ - (MCP Docs|Universal Docs)$/, '')} — ${kind}`);
+  });
+}
+
+/** It is the window in front now. */
+function inFront(win) {
+  front = win;
+  recent = [...recent.filter((w) => w !== win), win];
+}
+
 /** Keep track of a window of the app: which folder it shows, and when it is the one in front. */
 function track(win, server) {
   const id = win.id;
   attach(win, server);
-  // index.html is titled with the hosted app's name until the page learns it is this app (client/src/brand.ts).
-  win.on('page-title-updated', (e, title) => title === 'Universal Docs' && e.preventDefault());
+  titled(win, 'Local');
   win.on('focus', () => {
-    front = win;
+    inFront(win);
     const s = serverOf(win);
     if (s) rememberFolder(s.dir);
   });
   win.once('closed', () => detach(id, win));
+}
+
+/** Keep track of a Web tab. */
+function trackWeb(win) {
+  webWindows.add(win);
+  titled(win, 'Web');
+  win.on('focus', () => inFront(win));
+  win.once('closed', () => {
+    webWindows.delete(win);
+    recent = recent.filter((w) => w !== win);
+    if (front === win) front = null;
+  });
+}
+
+/** A Web tab on `url` (the hosted app's); with `tabOf`, a tab of that window where the system has them (macOS). */
+function createWebWindow(url = `${WEB_URL}/`, tabOf = null) {
+  const win = new BrowserWindow({ ...WINDOW_OPTIONS, webPreferences: { session: webSession } });
+  trackWeb(win);
+  if (tabOf && !tabOf.isDestroyed() && process.platform === 'darwin') tabOf.addTabbedWindow(win);
+  void win.loadURL(url);
+  return win;
+}
+
+/** Tabs of one window share its frame. */
+const sameFrame = (a, b) => {
+  const x = a.getBounds();
+  const y = b.getBounds();
+  return x.x === y.x && x.y === y.y && x.width === y.width && x.height === y.height;
+};
+
+/**
+ * The banner's switch (client/src/components/DesktopBanner.tsx): to a tab of the other kind in this window,
+ * else the one last in front anywhere, else a new tab of that kind here (the folder last open, for Local).
+ */
+async function switchTo(kind, from) {
+  const want = kind === 'web' ? isWeb : (w) => !!serverOf(w);
+  const here = from && !from.isDestroyed() ? BrowserWindow.getAllWindows().find((w) => w !== from && want(w) && sameFrame(w, from)) : null;
+  const target = here ?? lastWindow(want);
+  if (target) {
+    if (target.isMinimized()) target.restore();
+    target.show();
+    target.focus();
+    return;
+  }
+  if (kind === 'web') return void createWebWindow(`${WEB_URL}/`, from).focus();
+  const server = await serverFor(lastFolder() ?? app.getPath('home'));
+  createWindow(server, `${server.origin}/`, from).focus();
+}
+
+/** Sign out of the hosted app: its session ends there and here, and Web tabs go to the sign-in page. */
+async function signOutOfWeb() {
+  try {
+    await webSession.fetch(`${WEB_URL}/api/auth/logout`, { method: 'POST' });
+  } catch {
+    // Offline: the session is forgotten here all the same.
+  }
+  await webSession.clearStorageData();
+  for (const win of webWindows) void win.loadURL(`${WEB_URL}/login`);
+}
+
+/**
+ * An mcpdocs:// link: the banner's switch (from a page of the app), or the code a Google sign-in in the system
+ * browser hands back (from the system), traded for the Web tab's session (/api/auth/handoff).
+ */
+function handleAppLink(link, from = null) {
+  let u;
+  try {
+    u = new URL(link);
+  } catch {
+    return;
+  }
+  const failed = (e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e));
+  if (u.hostname === 'switch') return void switchTo(u.searchParams.get('to') === 'web' ? 'web' : 'local', from).catch(failed);
+  if (u.hostname === 'signed-in') {
+    const code = u.searchParams.get('code');
+    if (!code) return;
+    const url = `${WEB_URL}/api/auth/handoff?code=${encodeURIComponent(code)}`;
+    const win = lastWindow(isWeb) ?? createWebWindow('about:blank', front);
+    void win.loadURL(url);
+    win.focus();
+    bringToFront();
+  }
 }
 
 /** A window on `url` of `server`'s folder; with `tabOf`, a tab of that window where the system has them (macOS). */
@@ -409,11 +524,37 @@ function createWindow(server, url, tabOf = null) {
 // "Open in a new tab" (window.open) opens another window of the app, as a tab of the window it came from
 // where the system has window tabs (macOS), on the same folder; links to anywhere else go to the browser.
 const serverAt = (url) => [...servers.values()].find((s) => url.startsWith(`${s.origin}/`));
+const webAt = (url) => {
+  try {
+    return new URL(url).origin === WEB_ORIGIN;
+  } catch {
+    return false;
+  }
+};
 app.on('web-contents-created', (_e, contents) => {
   contents.setWindowOpenHandler(({ url: target }) => {
-    if (serverAt(target)) return { action: 'allow', overrideBrowserWindowOptions: WINDOW_OPTIONS };
+    const opener = BrowserWindow.fromWebContents(contents);
+    // A Web tab's links to the hosted app open more Web tabs (with its session, which a window opened from it keeps).
+    if (isWeb(opener) ? webAt(target) : serverAt(target)) return { action: 'allow', overrideBrowserWindowOptions: WINDOW_OPTIONS };
     void shell.openExternal(target);
     return { action: 'deny' };
+  });
+  contents.on('will-navigate', (e, url) => {
+    if (url.startsWith('mcpdocs:')) {
+      e.preventDefault();
+      return handleAppLink(url, BrowserWindow.fromWebContents(contents));
+    }
+    if (!isWeb(BrowserWindow.fromWebContents(contents))) return;
+    const u = new URL(url);
+    // Google refuses to sign in inside an app's browser, so the system browser does it and hands back a code.
+    if (u.origin === WEB_ORIGIN && u.pathname === '/api/auth/google/start') {
+      e.preventDefault();
+      u.searchParams.set('desktop', '1');
+      void shell.openExternal(u.href);
+    } else if (u.origin !== WEB_ORIGIN) {
+      e.preventDefault();
+      void shell.openExternal(url);
+    }
   });
   // The right-click menu a browser would show (desktop/contextMenu.js).
   contents.on('context-menu', (_e, params) => {
@@ -430,8 +571,9 @@ app.on('web-contents-created', (_e, contents) => {
   });
   contents.on('did-create-window', (child, { url }) => {
     const opener = BrowserWindow.fromWebContents(contents);
-    const server = serverOf(opener) ?? serverAt(url);
+    const server = serverOf(opener) ?? (isWeb(opener) ? null : serverAt(url));
     if (server) track(child, server);
+    else if (isWeb(opener)) trackWeb(child);
     if (process.platform === 'darwin' && opener) opener.addTabbedWindow(child);
   });
 });
@@ -475,6 +617,7 @@ async function showFile(file) {
  */
 async function newTab() {
   const win = BrowserWindow.getFocusedWindow() ?? front;
+  if (isWeb(win)) return void createWebWindow(`${WEB_URL}/`, win).focus();
   const server = serverOf(win) ?? frontServer();
   if (!server) return openFolder(lastFolder() ?? app.getPath('home'));
   let listing = '/';
@@ -494,11 +637,18 @@ async function newTab() {
 // Finder asks for a file (a double-click when the app is the file's default, Open With, a file dropped on the
 // Dock icon) with open-file, which comes before the app is ready when that is what started it.
 let launchFile = null;
+let launchLink = null;
 let started = false;
 app.on('open-file', (e, file) => {
   e.preventDefault();
   if (!started) launchFile = file;
   else void showFile(file).catch((err) => dialog.showErrorBox('MCP Docs', String(err.message ?? err)));
+});
+// mcpdocs:// links from the system (macOS): a Google sign-in handing back to the app.
+app.on('open-url', (e, url) => {
+  e.preventDefault();
+  if (!started) launchLink = url;
+  else handleAppLink(url);
 });
 
 // --- Default app (macOS) ----------------------------------------------------------------------------------
@@ -600,16 +750,20 @@ function buildMenu() {
             label: 'New Window',
             accelerator: 'CmdOrCtrl+Shift+N',
             click: () => {
+              if (isWeb(BrowserWindow.getFocusedWindow() ?? front)) return void createWebWindow();
               const server = frontServer();
               if (server) createWindow(server, `${server.origin}/`);
             },
           },
+          { label: 'Open Web Tab', click: () => void switchTo('web', BrowserWindow.getFocusedWindow()).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
           { type: 'separator' },
-          { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: () => void chooseFolder(BrowserWindow.getFocusedWindow()).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
+          // From a Web tab the folder opens in a new tab beside it: a Web tab stays one.
+          { label: 'Open Folder…', accelerator: 'CmdOrCtrl+Shift+O', click: () => void chooseFolder(isWeb(BrowserWindow.getFocusedWindow()) ? null : BrowserWindow.getFocusedWindow()).catch((e) => dialog.showErrorBox('MCP Docs', String(e.message ?? e))) },
           { label: mac ? 'Show Folder in Finder' : 'Show Folder', click: () => frontServer() && void shell.openPath(frontServer().dir) },
           { type: 'separator' },
           { label: 'Connect an Agent (MCP)…', click: () => void connectAgent() },
           { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => showPage('/settings') },
+          { label: 'Sign Out of Web', click: () => void signOutOfWeb() },
           { type: 'separator' },
           mac ? { role: 'close' } : { role: 'quit' },
         ],
@@ -622,6 +776,11 @@ function buildMenu() {
 }
 
 app.whenReady().then(async () => {
+  webSession = session.fromPartition('persist:web');
+  for (const ses of [session.defaultSession, webSession]) ses.setUserAgent(`${ses.getUserAgent()} ${UA_MARK}`);
+  // The installed app handles mcpdocs:// (declared in package.json too); a copy run from a clone only when asked,
+  // so it does not take the links from the installed one.
+  if (app.isPackaged || process.env.MCPDOCS_SCHEME === '1') app.setAsDefaultProtocolClient('mcpdocs');
   buildMenu();
   startMcpProxy();
   if (!existsSync(path.join(root, 'dist', 'client', 'index.html'))) {
@@ -658,6 +817,7 @@ app.whenReady().then(async () => {
     app.quit();
   } finally {
     started = true;
+    if (launchLink) handleAppLink(launchLink);
     // The installed app offers once to open the standard formats too.
     if (servers.size && canBeDefault() && !existsSync(defaultAskedFile())) void offerDefaultApp(true);
   }

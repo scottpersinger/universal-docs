@@ -39,6 +39,8 @@ interface Pending {
   verifier: string;
   redirectUri: string;
   next: string;
+  /** Started from the desktop app (MCP Docs) in the system browser: the session goes back to the app. */
+  desktop: boolean;
   expires: number;
 }
 
@@ -53,12 +55,12 @@ export class GoogleLogin {
   }
 
   /** The consent URL to send the browser to, and the state the callback must bring back. */
-  start(redirectUri: string, next: unknown): { url: string; state: string } {
+  start(redirectUri: string, next: unknown, desktop = false): { url: string; state: string } {
     const now = Date.now();
     for (const [k, v] of this.pending) if (v.expires < now) this.pending.delete(k);
     const state = randomBytes(24).toString('base64url');
     const verifier = randomBytes(32).toString('base64url');
-    this.pending.set(state, { verifier, redirectUri, next: safeNextPath(next), expires: now + GOOGLE_STATE_TTL_MS });
+    this.pending.set(state, { verifier, redirectUri, next: safeNextPath(next), desktop, expires: now + GOOGLE_STATE_TTL_MS });
     const url = new URL(AUTHORIZE_URL);
     url.search = new URLSearchParams({
       response_type: 'code',
@@ -74,7 +76,7 @@ export class GoogleLogin {
   }
 
   /** Finish the flow: check the state, trade the code for tokens and ask Google who signed in. */
-  async finish(state: string, code: string): Promise<{ identity: GoogleIdentity; next: string }> {
+  async finish(state: string, code: string): Promise<{ identity: GoogleIdentity; next: string; desktop: boolean }> {
     const st = this.pending.get(state);
     this.pending.delete(state);
     if (!st || st.expires < Date.now()) throw new GoogleLoginError('This sign-in link is invalid or has expired. Try again.');
@@ -106,6 +108,7 @@ export class GoogleLogin {
     return {
       identity: { sub: info.sub, email: info.email, emailVerified: info.email_verified === true || info.email_verified === 'true' },
       next: st.next,
+      desktop: st.desktop,
     };
   }
 }

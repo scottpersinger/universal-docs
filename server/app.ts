@@ -7,6 +7,7 @@ import { fetchPublicFile, WebFetchError } from './webFetch.ts';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import Anthropic from '@anthropic-ai/sdk';
 import { createReadStream, existsSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -170,6 +171,18 @@ export interface AppOptions {
      */
     env?: Record<string, string | undefined>;
   };
+}
+
+/** The page the system browser shows after a Google sign-in for the desktop app: it opens the app with the code. */
+function handoffPage(link: string): string {
+  const href = link.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Signed in</title>
+<style>body{font-family:system-ui,sans-serif;max-width:420px;margin:80px auto;padding:0 16px;color:#1f1f1f;text-align:center}a.btn{display:inline-block;margin-top:16px;padding:10px 18px;border-radius:6px;background:#1a73e8;color:#fff;text-decoration:none}p{color:#5f6368}</style>
+</head><body><h1>You're signed in</h1><p>Go back to MCP Docs to carry on. You can close this tab.</p>
+<a class="btn" href="${href}">Open MCP Docs</a>
+<script>location.href = ${JSON.stringify(link).replace(/</g, '\\u003c')};</script>
+</body></html>`;
 }
 
 function cleanTitle(t: unknown): string | null {
@@ -499,11 +512,18 @@ export async function buildApp(opts: AppOptions) {
   const recents = opts.local ? (opts.local.recents === undefined ? (recentsAvailable() ? () => recentFiles(LISTED_EXTS) : null) : opts.local.recents) : null;
   app.get('/api/auth/me', async (req) => ({ user: req.user, googleLogin: !!google, ...(folder && req.user ? { local: { dir: folder.root } } : {}) }));
 
+  // Google refuses to sign in inside an embedded browser, so the desktop app's Web tab (MCP Docs) has the
+  // system browser do it (?desktop=1). The callback then gives that browser a one-time code for the app
+  // instead of a session (mcpdocs://signed-in), and the app's tab trades it for its own session at
+  // /api/auth/handoff. Codes live two minutes, in memory.
+  const handoffs = new Map<string, { userId: string; next: string; expires: number }>();
+  const HANDOFF_TTL_MS = 2 * 60 * 1000;
+
   // Google sign-in: send the browser to Google; it comes back to the callback, which signs the user in.
   app.get('/api/auth/google/start', async (req, reply) => {
     if (!google) return reply.code(404).send({ error: 'Google sign-in is not set up on this server.' });
-    const { next } = req.query as { next?: string };
-    const { url, state } = google.start(`${originOf(req)}/api/auth/google/callback`, next);
+    const { next, desktop } = req.query as { next?: string; desktop?: string };
+    const { url, state } = google.start(`${originOf(req)}/api/auth/google/callback`, next, desktop === '1');
     reply.setCookie(GOOGLE_STATE_COOKIE, state, {
       path: '/api/auth/google',
       httpOnly: true,
@@ -524,9 +544,17 @@ export async function buildApp(opts: AppOptions) {
     if (q.error || !q.state || !q.code) return fail('Google sign-in failed. Try again.');
     if (!expected || expected !== q.state) return fail('This sign-in link is invalid or has expired. Try again.');
     try {
-      const { identity, next } = await google.finish(q.state, q.code);
+      const { identity, next, desktop } = await google.finish(q.state, q.code);
       const user = auth.loginWithGoogle(identity);
       if (user === 'unverified') return fail("Your Google account's email address isn't verified, so it can't be used to sign in.");
+      if (desktop) {
+        const now = Date.now();
+        for (const [k, v] of handoffs) if (v.expires < now) handoffs.delete(k);
+        const code = randomBytes(24).toString('base64url');
+        handoffs.set(code, { userId: user.id, next, expires: now + HANDOFF_TTL_MS });
+        const link = `mcpdocs://signed-in?${new URLSearchParams({ code }).toString()}`;
+        return reply.type('text/html; charset=utf-8').header('cache-control', 'no-store').send(handoffPage(link));
+      }
       setSessionCookie(reply, user.id);
       return reply.redirect(next);
     } catch (e) {
@@ -534,6 +562,16 @@ export async function buildApp(opts: AppOptions) {
       req.log.error({ err: e }, 'google sign-in failed');
       return fail('Google sign-in failed. Try again.');
     }
+  });
+
+  // The desktop app's Web tab trades a code from a Google sign-in in the system browser for its own session.
+  app.get('/api/auth/handoff', async (req, reply) => {
+    const { code } = req.query as { code?: string };
+    const h = code ? handoffs.get(code) : undefined;
+    if (code) handoffs.delete(code);
+    if (!h || h.expires < Date.now()) return reply.redirect(`/login?error=${encodeURIComponent('This sign-in has expired. Try again.')}`);
+    setSessionCookie(reply, h.userId);
+    return reply.redirect(h.next);
   });
 
   // The privacy policy, terms of service and support page: public, and plain HTML for readers without scripts.

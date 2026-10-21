@@ -184,6 +184,30 @@ describe('google sign-in', () => {
     });
   });
 
+  it('hands a sign-in in the system browser back to the desktop app with a one-time code', async () => {
+    await withGoogleApp({ sub: 'g-d', email: 'desk@x.com', email_verified: true }, async (g) => {
+      let res = await g.inject({ method: 'GET', url: '/api/auth/google/start?desktop=1&next=%2Fdoc%2Fabc' });
+      const state = new URL(res.headers.location as string).searchParams.get('state')!;
+      res = await g.inject({ method: 'GET', url: `/api/auth/google/callback?state=${state}&code=c`, headers: { cookie: cookieFrom(res) } });
+      // The browser gets no session, only a page that opens the app with a code.
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(String(res.headers['set-cookie'] ?? '')).not.toContain('sid=');
+      const code = /mcpdocs:\/\/signed-in\?code=([\w-]+)/.exec(res.body)![1];
+
+      // The app's Web tab trades it for a session, once.
+      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?code=${code}` });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('/doc/abc');
+      const sid = cookieFrom(res);
+      expect(sid).toMatch(/^sid=/);
+      expect((await g.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: sid } })).json().user.email).toBe('desk@x.com');
+      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?code=${code}` });
+      expect(res.headers.location).toMatch(/^\/login\?error=/);
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+  });
+
   it('links to an existing verified password account with the same email', async () => {
     await withGoogleApp({ sub: 'g-2', email: 'linked@x.com', email_verified: true }, async (g, _tokens, gbox) => {
       const { user } = await signUp(g, gbox, 'linked@x.com');
