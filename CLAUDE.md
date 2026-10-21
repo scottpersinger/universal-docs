@@ -90,7 +90,8 @@ type stripping; imports use `.ts` extensions.
   name (`local.cookie`, `LOCAL_COOKIE`). `buildApp({ local: { dir, token } })` swaps in the
   folder-backed stores of `server/localStore.ts` (`LocalSheetStore` and `LocalFileStore`, subclasses that
   override the on-disk hooks of `SheetStore` and `FileStore`: real `.md`/`.csv` files, `.ffsheet`/`.ffslides`/
-  `.ffdoc` for the JSON formats, the tables synced with the folder on every list) and makes every request
+  `.ffdoc` for the JSON formats, the tables synced with the folder on every list; a document's title is its whole file name,
+  extension included, and what is made from a title drops it with `titleBase` in `shared/docNames.ts`) and makes every request
   the one local user. The client learns it is local from `useAuth().local`.
   It has no background jobs (app changes, research): `AgentOptions.jobs` is false, so the assistant is not
   offered `JOB_TOOLS` and its prompt is `PROMPT_WITHOUT_JOBS`, and `/api/agent/jobs` refuses.

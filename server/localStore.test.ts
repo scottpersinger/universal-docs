@@ -67,7 +67,7 @@ describe('a mounted folder', () => {
   it('shows one folder at a time: its folders and every file in it, without hidden folders and node_modules', async () => {
     const top = await library();
     expect(top.folders).toEqual([{ name: 'reports', path: 'reports' }]);
-    expect(top.docs.map((d) => [d.title, d.kind])).toEqual([['notes', 'markdown']]);
+    expect(top.docs.map((d) => [d.title, d.kind])).toEqual([['notes.md', 'markdown']]);
     // A file the app cannot show is listed too, as a stored file of a type it does not know.
     expect(top.files.map((f) => [f.filename, f.type]).sort()).toEqual([
       ['scan.pdf', 'application/pdf'],
@@ -75,7 +75,7 @@ describe('a mounted folder', () => {
     ]);
     const reports = await library('reports');
     expect(reports.folders).toEqual([]);
-    expect(reports.docs.map((d) => [d.title, d.format, d.folder])).toEqual([['stock', 'csv', 'reports']]);
+    expect(reports.docs.map((d) => [d.title, d.format, d.folder])).toEqual([['stock.csv', 'csv', 'reports']]);
     expect((await call('GET', '/api/library?folder=missing')).status).toBe(404);
     expect((await call('GET', '/api/library?folder=..')).status).toBe(404);
   });
@@ -94,8 +94,8 @@ describe('a mounted folder', () => {
   });
 
   it('lists every file of a kind for the assistant, wherever it is', async () => {
-    expect((await markdown()).map((d) => d.title)).toEqual(['notes']);
-    expect((await sheets()).map((s) => [s.title, s.folder, s.format])).toEqual([['stock', 'reports', 'csv']]);
+    expect((await markdown()).map((d) => d.title)).toEqual(['notes.md']);
+    expect((await sheets()).map((s) => [s.title, s.folder, s.format])).toEqual([['stock.csv', 'reports', 'csv']]);
   });
 
   it('reads and writes Markdown files as plain text', async () => {
@@ -130,21 +130,21 @@ describe('a mounted folder', () => {
     expect(existsSync(at('reports', 'stock.csv'))).toBe(false);
     expect((await importXlsx(readFileSync(at('reports', 'stock.xlsx')))).workbook.tabs[0].cells.B2.v).toBe('4');
     // Same document, same place in the list.
-    expect((await sheets()).map((s) => [s.id, s.title, s.folder, s.format])).toEqual([[meta.id, 'stock', 'reports', 'xlsx']]);
+    expect((await sheets()).map((s) => [s.id, s.title, s.folder, s.format])).toEqual([[meta.id, 'stock.xlsx', 'reports', 'xlsx']]);
     // Nothing of the CSV file was kept as an Excel file's original.
     expect(existsSync(path.join(dataDir, 'trash'))).toBe(false);
   });
 
   it('creates new documents as files named by their title, without overwriting', async () => {
     const a = await call<{ doc: SheetMeta }>('POST', '/api/markdown', { title: 'notes', text: 'second' });
-    expect(a.body.doc.title).toBe('notes 2');
+    expect(a.body.doc.title).toBe('notes 2.md');
     expect(readFileSync(at('notes 2.md'), 'utf8')).toBe('second');
     const deck = await call<{ deck: SheetMeta }>('POST', '/api/decks', { title: 'Q3: kickoff', folder: 'reports' });
-    expect([deck.body.deck.title, deck.body.deck.folder]).toEqual(['Q3 kickoff', 'reports']);
+    expect([deck.body.deck.title, deck.body.deck.folder]).toEqual(['Q3 kickoff.pptx', 'reports']);
     expect(existsSync(at('reports', 'Q3 kickoff.pptx'))).toBe(true);
     // Neither a title nor a folder can reach outside the mounted folder.
     const out = await call<{ doc: SheetMeta }>('POST', '/api/markdown', { title: '../../escape' });
-    expect(out.body.doc.title).toBe('-..-escape');
+    expect(out.body.doc.title).toBe('-..-escape.md');
     expect(existsSync(at('-..-escape.md'))).toBe(true);
     expect((await call('POST', '/api/markdown', { title: 'x', folder: '../outside' })).status).toBe(404);
   });
@@ -156,11 +156,11 @@ describe('a mounted folder', () => {
     expect((await call('POST', '/api/folders', { name: '2026', folder: 'archive' })).status).toBe(200);
     expect(existsSync(at('archive', '2026'))).toBe(true);
 
-    const doc = (await library()).docs.find((d) => d.title === 'notes 2')!;
+    const doc = (await library()).docs.find((d) => d.title === 'notes 2.md')!;
     expect((await call('POST', '/api/library/move', { kind: 'markdown', id: doc.id, folder: 'archive/2026' })).status).toBe(200);
     expect(existsSync(at('notes 2.md'))).toBe(false);
     expect(readFileSync(at('archive', '2026', 'notes 2.md'), 'utf8')).toBe('second');
-    expect((await library('archive/2026')).docs.map((d) => [d.id, d.title])).toEqual([[doc.id, 'notes 2']]);
+    expect((await library('archive/2026')).docs.map((d) => [d.id, d.title])).toEqual([[doc.id, 'notes 2.md']]);
 
     const pdf = (await library()).files.find((f) => f.filename === 'scan.pdf')!;
     expect((await call('POST', '/api/library/move', { kind: 'file', id: pdf.id, folder: 'archive' })).status).toBe(200);
@@ -180,9 +180,15 @@ describe('a mounted folder', () => {
   });
 
   it('renames the file with the document and moves a deleted one out of the folder', async () => {
-    const doc = (await markdown()).find((d) => d.title === 'notes 2')!;
+    const doc = (await markdown()).find((d) => d.title === 'notes 2.md')!;
     const renamed = await call<{ meta: SheetMeta }>('PATCH', `/api/markdown/${doc.id}`, { title: 'old notes' });
-    expect([renamed.body.meta.title, renamed.body.meta.folder]).toEqual(['old notes', 'archive/2026']);
+    expect([renamed.body.meta.title, renamed.body.meta.folder]).toEqual(['old notes.md', 'archive/2026']);
+    // Typed with the extension, it is not doubled; the extension stays whatever is typed.
+    const again = await call<{ meta: SheetMeta }>('PATCH', `/api/markdown/${doc.id}`, { title: 'older notes.md' });
+    expect(again.body.meta.title).toBe('older notes.md');
+    expect(existsSync(at('archive', '2026', 'older notes.md'))).toBe(true);
+    const back = await call<{ meta: SheetMeta }>('PATCH', `/api/markdown/${doc.id}`, { title: 'old notes' });
+    expect(back.body.meta.title).toBe('old notes.md');
     expect(existsSync(at('archive', '2026', 'notes 2.md'))).toBe(false);
     expect(readFileSync(at('archive', '2026', 'old notes.md'), 'utf8')).toBe('second');
 
@@ -201,7 +207,7 @@ describe('a mounted folder', () => {
     writeFileSync(at('deep', 'quarterly.py'), 'any file');
     writeFileSync(at('node_modules', 'pkg', 'quarterly.md'), 'dependency');
     const found = (await call<Library & { truncated: boolean }>('GET', '/api/library/search?q=QUARTER')).body;
-    expect(found.docs.map((d) => [d.title, d.folder])).toEqual([['Quarterly plan', 'deep/er/still']]);
+    expect(found.docs.map((d) => [d.title, d.folder])).toEqual([['Quarterly plan.md', 'deep/er/still']]);
     expect(found.files.map((f) => [f.filename, f.folder])).toEqual([
       ['quarterly.py', 'deep'],
       ['quarterly.pdf', 'deep/er'],
@@ -218,8 +224,8 @@ describe('a mounted folder', () => {
     writeFileSync(at('fresh.md'), 'new');
     rmSync(at('-..-escape.md'));
     const titles = (await library()).docs.map((d) => d.title);
-    expect(titles).toContain('fresh');
-    expect(titles).not.toContain('-..-escape');
+    expect(titles).toContain('fresh.md');
+    expect(titles).not.toContain('-..-escape.md');
   });
 
   it('serves and stores other files in the folder', async () => {
@@ -243,7 +249,7 @@ describe('a mounted folder', () => {
     writeFileSync(at('budget.xlsx'), Buffer.from(await book.xlsx.writeBuffer()));
 
     const top = await library();
-    const meta = top.docs.find((d) => d.title === 'budget')!;
+    const meta = top.docs.find((d) => d.title === 'budget.xlsx')!;
     expect([meta.kind, meta.format]).toEqual(['sheet', 'xlsx']);
     expect(top.files.some((f) => f.filename === 'budget.xlsx')).toBe(false);
     type Loaded = { sheet: SheetMeta; workbook: Workbook; notKept?: string[] };
@@ -294,7 +300,7 @@ describe('a mounted folder', () => {
     slide.addChart(pres.ChartType.bar, [{ name: 'Sales', labels: ['Q1', 'Q2'], values: [1, 2] }], { x: 4, y: 2.5, w: 4, h: 2 });
     writeFileSync(at('review.pptx'), (await pres.write({ outputType: 'nodebuffer' })) as Buffer);
 
-    const meta = (await library()).docs.find((d) => d.title === 'review')!;
+    const meta = (await library()).docs.find((d) => d.title === 'review.pptx')!;
     expect([meta.kind, meta.format]).toEqual(['deck', 'pptx']);
     type Loaded = { meta: SheetMeta; deck: Deck; notKept?: string[] };
     const loaded = (await call<Loaded>('GET', `/api/decks/${meta.id}`)).body;
@@ -339,7 +345,7 @@ describe('a mounted folder', () => {
     zip.file('word/document.xml', xml.replace('<w:sectPr', `${table}<w:sectPr`));
     writeFileSync(at('letter.docx'), await zip.generateAsync({ type: 'nodebuffer' }));
 
-    const meta = (await library()).docs.find((d) => d.title === 'letter')!;
+    const meta = (await library()).docs.find((d) => d.title === 'letter.docx')!;
     expect([meta.kind, meta.format]).toEqual(['doc', 'docx']);
     type Loaded = { meta: SheetMeta; doc: Doc; notKept?: string[] };
     const loaded = (await call<Loaded>('GET', `/api/docs/${meta.id}`)).body;
@@ -392,9 +398,9 @@ describe('a folder opened before it had folders', () => {
     first = await buildApp({ dataDir: data, local: { dir } });
     try {
       const top = (await first.inject({ method: 'GET', url: '/api/library' })).json() as Library;
-      expect(top.docs.map((d) => d.title)).toEqual(['top']);
+      expect(top.docs.map((d) => d.title)).toEqual(['top.md']);
       const people = (await first.inject({ method: 'GET', url: '/api/library?folder=vault/people' })).json() as Library;
-      expect(people.docs.map((d) => [d.id, d.title])).toEqual([[id, 'Kate']]);
+      expect(people.docs.map((d) => [d.id, d.title])).toEqual([[id, 'Kate.md']]);
     } finally {
       await first.close();
       rmSync(dir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { DOMSerializer } from 'prosemirror-model';
+import { nameWithExt, titleBase } from '../../../shared/docNames.ts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { FolderCrumbs, lastListingHref } from '../components/FolderCrumbs.tsx';
@@ -382,8 +383,8 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
         { label: 'Rename…', action: () => setDialog({ kind: 'rename' }) },
         { label: 'Import Word document…', action: () => void importDocxBlocks() },
         'sep',
-        { label: 'Download as Markdown (.md)', action: () => downloadFile(`${meta.title}.md`, 'text/markdown', docToMarkdown(ctl.doc)) },
-        { label: 'Download as web page (.html)', action: () => downloadFile(`${meta.title}.html`, 'text/html', docToHtml(ctl, meta.title)) },
+        { label: 'Download as Markdown (.md)', action: () => downloadFile(nameWithExt(meta.title, 'md'), 'text/markdown', docToMarkdown(ctl.doc)) },
+        { label: 'Download as web page (.html)', action: () => downloadFile(nameWithExt(meta.title, 'html'), 'text/html', docToHtml(ctl, titleBase(meta.title))) },
         { label: 'Download as PDF', action: () => void exportPdf() },
         { label: 'Print / Save as PDF…', shortcut: `${MOD}P`, action: () => setPrinting(true) },
         'sep',

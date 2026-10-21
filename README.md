@@ -81,7 +81,7 @@ Each file has its own chat, and the home page has one. See [Assistant](#assistan
 
 ## Using the app
 
-The folder's files are the file list and its directories are the library's folders (see Folders below; hidden entries and `node_modules` are skipped). A file's name in the list is its file name without the extension. **File → Open Folder…** switches to another folder. Your folders need no account and nothing to sign in to; your web files do (see Your web files below).
+The folder's files are the file list and its directories are the library's folders (see Folders below; hidden entries and `node_modules` are skipped). A file's name in the list is its whole file name, extension included: the app never hides one. **File → Open Folder…** switches to another folder. Your folders need no account and nothing to sign in to; your web files do (see Your web files below).
 
 - Markdown (`.md`) and CSV (`.csv`) files open in their editors and are saved back as the plain text they are.
 - Spreadsheets, presentations and documents are Excel, PowerPoint and Word files (`.xlsx`, `.pptx`, `.docx`), edited in place; new ones are made as those too, and a CSV file that outgrows CSV becomes an `.xlsx` file. A file made elsewhere that holds something the app can't keep opens read-only until you allow editing, and the first save over it keeps a copy in the app's trash. Only a file its Office format cannot hold (a picture in a cell, a gradient, a video in a document) is kept in the app's own format (`.ffsheet`, `.ffslides`, `.ffdoc`), after asking.

@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { HTML_TYPE, type StoredFile } from '../shared/types.ts';
+import { titleBase } from '../shared/docNames.ts';
 import type { FileStore } from './files.ts';
 import type { SheetStore } from './sheets.ts';
 import { fetchPublicFile, WebFetchError } from './webFetch.ts';
@@ -73,7 +74,7 @@ export function paperFor(locale: string | undefined): Paper {
 
 /** A file name for the PDF of a file called `title`. */
 export function pdfName(title: string): string {
-  const base = title.replace(/\.(html?|md|markdown)$/i, '').replace(/[\\/\u0000-\u001f]/g, '_').trim() || 'document';
+  const base = titleBase(title.replace(/\.html?$/i, '')).replace(/[\\/\u0000-\u001f]/g, '_').trim() || 'document';
   return `${base}.pdf`;
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { nameWithExt } from '../../../shared/docNames.ts';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { FolderCrumbs, lastListingHref } from '../components/FolderCrumbs.tsx';
 import { markdownTitle, type MarkdownDoc } from '../../../shared/markdown.ts';
@@ -288,7 +289,7 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
         { label: 'Rename…', action: () => setDialog({ kind: 'rename' }) },
         { label: 'Import Markdown file…', action: () => void importMarkdownFile() },
         'sep',
-        { label: 'Download (.md)', action: () => downloadFile(`${meta.title}.md`, 'text/markdown', ctl.text) },
+        { label: 'Download (.md)', action: () => downloadFile(nameWithExt(meta.title, 'md'), 'text/markdown', ctl.text) },
         { label: 'Download as PDF', action: () => void exportPdf() },
         'sep',
         { label: 'Delete document', danger: true, action: () => setDialog({ kind: 'delete' }) },

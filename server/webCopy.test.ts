@@ -83,11 +83,12 @@ describe('copying between the desktop folder and the web', () => {
     expect((await hosted.inject({ method: 'GET', url: src, headers: { cookie } })).statusCode).toBe(200);
 
     res = await post('/api/web/upload', { id: notes.id, webFolder: 'Shared' });
-    expect(res.json()).toMatchObject({ kind: 'markdown', title: notes.title });
+    // The web's titles have no extension: notes.md is notes there.
+    expect(res.json()).toMatchObject({ kind: 'markdown', title: 'notes' });
     res = await post('/api/web/upload', { id: picture.id, webFolder: '' });
     expect(res.json()).toMatchObject({ kind: 'file', title: 'dot.png' });
     const webLib = (await hosted.inject({ method: 'GET', url: '/api/library?folder=Shared', headers: { cookie } })).json();
-    expect(webLib.docs.map((d: { title: string }) => d.title).sort()).toEqual([notes.title, 'Plan'].sort());
+    expect(webLib.docs.map((d: { title: string }) => d.title).sort()).toEqual(['Plan', 'notes'].sort());
   });
 
   it('downloads a web file into a folder as Office, the app’s own format or a PDF', async () => {
@@ -101,7 +102,7 @@ describe('copying between the desktop folder and the web', () => {
     // As Word, into Inbox: the picture is in the file.
     let res = await post('/api/web/download', { kind: 'doc', id: webDoc.id, title: 'Proposal', format: 'office', folder: 'Inbox' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ kind: 'doc', title: 'Proposal', warnings: [] });
+    expect(res.json()).toMatchObject({ kind: 'doc', title: 'Proposal.docx', warnings: [] });
     const zip = await JSZip.loadAsync(readFileSync(path.join(dir, 'Inbox', 'Proposal.docx')));
     expect(Object.keys(zip.files).some((f) => f.startsWith('word/media/'))).toBe(true);
 
@@ -114,7 +115,7 @@ describe('copying between the desktop folder and the web', () => {
     expect(res.json()).toMatchObject({ kind: 'file', title: 'Proposal.pdf' });
     expect(readFileSync(path.join(dir, 'Inbox', 'Proposal.pdf'), 'utf8')).toBe('%PDF-made');
     res = await post('/api/web/download', { kind: 'doc', id: webDoc.id, title: 'Proposal', format: 'office', folder: 'Inbox' });
-    expect(res.json().title).toBe('Proposal 2');
+    expect(res.json().title).toBe('Proposal 2.docx');
     expect(existsSync(path.join(dir, 'Inbox', 'Proposal 2.docx'))).toBe(true);
 
     // A spreadsheet as CSV, Markdown and a stored file as they are.

@@ -76,7 +76,10 @@ const FIND_BUDGET_MS = 60_000;
 const extOf = (file: string) => path.extname(file).toLowerCase();
 const iso = (ms: number) => new Date(ms).toISOString();
 /** A file's name in the library is its file name without the extension. */
-const titleOf = (rel: string) => path.posix.basename(rel, path.extname(rel));
+/** A document's title is its file's name, extension and all: the app never hides an extension (shared/docNames.ts). */
+const titleOf = (rel: string) => path.posix.basename(rel);
+/** The name without the extension, for the title inside an Office file. */
+const baseOf = (rel: string) => path.posix.basename(rel, path.extname(rel));
 
 interface Found {
   /** Path relative to the mounted folder, with forward slashes. */
@@ -238,6 +241,8 @@ export class LocalFolder {
    * a number is added if the name is taken. Creates the folder if it is missing.
    */
   freePath(folder: string, name: string, ext: string): string {
+    // A name that has the extension already (a title, which is a file name) does not get it twice.
+    if (ext && name.toLowerCase().endsWith(ext.toLowerCase())) name = name.slice(0, name.length - ext.length);
     const base =
       name
         .replace(/[\\/]/g, '-')
@@ -494,9 +499,9 @@ export class LocalSheetStore extends SheetStore {
       // drops what the app does not read). A file that was something else just before (a CSV file being
       // converted) is not one.
       if (this.written.get(file) !== this.folder.mtime(file) && isZip(this.folder.abs(file))) await this.folder.keepCopy(file);
-      if (type.format === 'xlsx') return workbookXlsx(doc as Workbook, titleOf(file));
-      if (type.format === 'pptx') return deckPptx(doc as Deck, titleOf(file), this.pictures.source);
-      return docDocx(doc as Doc, titleOf(file), async (src) => {
+      if (type.format === 'xlsx') return workbookXlsx(doc as Workbook, baseOf(file));
+      if (type.format === 'pptx') return deckPptx(doc as Deck, baseOf(file), this.pictures.source);
+      return docDocx(doc as Doc, baseOf(file), async (src) => {
         const img = await this.pictures.source.stored(src);
         return img && { type: img.type, data: img.bytes };
       });
@@ -546,7 +551,7 @@ export class LocalSheetStore extends SheetStore {
   /** The format is the extension: a CSV file that becomes an Excel file, say, is renamed to match. */
   protected override setFormat(r: SheetRow, format: SheetFormat | null): void {
     const want = extFor(r.kind, format);
-    if (extOf(r.file) !== want) this.moveFile(r, this.folder.freePath(r.folder, r.title, want));
+    if (extOf(r.file) !== want) this.moveFile(r, this.folder.freePath(r.folder, baseOf(r.file), want));
     super.setFormat(r, format);
   }
 
@@ -568,7 +573,9 @@ export class LocalSheetStore extends SheetStore {
   override rename(ownerId: string, id: string, title: string, kind?: DocKind): SheetMeta | null {
     const r = this.row(ownerId, id, kind);
     if (!r) return null;
-    if (title !== r.title) this.moveFile(r, this.folder.freePath(r.folder, title, path.extname(r.file)));
+    // As a stored file is (renamed): what was typed, with the file's extension whether it was typed or not.
+    const wanted = renamed(r.title, title);
+    if (wanted !== r.title) this.moveFile(r, this.folder.freePath(r.folder, baseOf(wanted), path.extname(r.file)));
     const meta = super.rename(ownerId, id, r.title, kind);
     // The rename did not touch the content, so the document keeps the time of its file.
     return meta && { ...meta, updatedAt: this.row(ownerId, id, kind)?.updated_at ?? meta.updatedAt };
@@ -578,7 +585,7 @@ export class LocalSheetStore extends SheetStore {
   override move(ownerId: string, id: string, folder: string): SheetMeta | null {
     const r = this.row(ownerId, id);
     if (!r) return null;
-    if (folder !== r.folder) this.moveFile(r, this.folder.freePath(folder, r.title, path.extname(r.file)));
+    if (folder !== r.folder) this.moveFile(r, this.folder.freePath(folder, baseOf(r.file), path.extname(r.file)));
     return this.get(ownerId, id);
   }
 }

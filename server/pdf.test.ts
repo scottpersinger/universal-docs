@@ -30,6 +30,9 @@ describe('pdfName', () => {
     expect(pdfName('Proposal')).toBe('Proposal.pdf');
     expect(pdfName('Report.html')).toBe('Report.pdf');
     expect(pdfName('README.md')).toBe('README.pdf');
+    // The desktop app's titles are file names.
+    expect(pdfName('Proposal.docx')).toBe('Proposal.pdf');
+    expect(pdfName('Pitch.pptx')).toBe('Pitch.pdf');
     expect(pdfName('a/b')).toBe('a_b.pdf');
     expect(pdfName('  ')).toBe('document.pdf');
   });

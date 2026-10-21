@@ -22,6 +22,7 @@ import { folderName } from '../shared/folders.ts';
 import type { Folders } from './folders.ts';
 import type { ImageStore } from './images.ts';
 import type { SheetStore } from './sheets.ts';
+import { titleBase } from '../shared/docNames.ts';
 
 export type ExportFormat = 'json' | 'md' | 'pptx' | 'csv' | 'xlsx';
 
@@ -53,7 +54,8 @@ export class ExportError extends Error {}
 
 /** A file name that is safe on every platform. */
 export function safeName(title: string, ext: string): string {
-  const base = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().replace(/\.+$/, '').slice(0, 120) || 'Untitled';
+  // A title that is a file name already (the desktop app's) does not keep that extension (shared/docNames.ts).
+  const base = titleBase(title).replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().replace(/\.+$/, '').slice(0, 120) || 'Untitled';
   return `${base}.${ext}`;
 }
 
@@ -287,9 +289,9 @@ export async function exportFile(meta: SheetMeta, data: FileData, format: Export
     case 'md':
       return { name: safeName(meta.title, 'md'), type, body: Buffer.from(data.kind === 'markdown' ? data.markdown.text : docMarkdown((data as { doc: Doc }).doc)) };
     case 'pptx':
-      return { name: safeName(meta.title, 'pptx'), type, body: await deckPptx((data as { deck: Deck }).deck, meta.title, source) };
+      return { name: safeName(meta.title, 'pptx'), type, body: await deckPptx((data as { deck: Deck }).deck, titleBase(meta.title), source) };
     case 'xlsx':
-      return { name: safeName(meta.title, 'xlsx'), type, body: await workbookXlsx((data as { workbook: Workbook }).workbook, meta.title) };
+      return { name: safeName(meta.title, 'xlsx'), type, body: await workbookXlsx((data as { workbook: Workbook }).workbook, titleBase(meta.title)) };
     case 'csv': {
       const wb = (data as { workbook: Workbook }).workbook;
       // A CSV file downloads as the file it is: raw values, not the displayed ones.

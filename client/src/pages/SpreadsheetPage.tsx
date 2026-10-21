@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { nameWithExt } from '../../../shared/docNames.ts';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { FolderCrumbs, lastListingHref } from '../components/FolderCrumbs.tsx';
 import { cellKey } from '../../../shared/cellref.ts';
@@ -306,7 +307,7 @@ function Workbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta: Sh
       },
       saveCopyAsCsv: () => setDialog({ kind: 'csvCopy' }),
       download: (kind) => {
-        if (kind === 'json') downloadFile(`${meta.title}.json`, 'application/json', JSON.stringify(ctl.store.workbook, null, 2));
+        if (kind === 'json') downloadFile(nameWithExt(meta.title, 'json'), 'application/json', JSON.stringify(ctl.store.workbook, null, 2));
         // Excel is written on the server from the saved workbook, so pending edits are flushed first.
         else if (kind === 'xlsx') void ctl.saver.flush().then(() => window.location.assign(`/api/files/${meta.id}/export?format=xlsx`));
         // A CSV file downloads as the file itself (raw values), written by the server from the saved copy.

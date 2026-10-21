@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
+import { nameWithExt } from '../../../shared/docNames.ts';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { FolderCrumbs, lastListingHref } from '../components/FolderCrumbs.tsx';
 import { LAYOUT_IDS, THEME_IDS, THEMES, type Deck } from '../../../shared/deck.ts';
@@ -490,7 +491,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
         { label: 'Download as PowerPoint (.pptx)', action: () => void exportPptx() },
         { label: 'Download as PDF', action: () => void exportPdf() },
         { label: 'Print / Save as PDF…', shortcut: `${MOD}P`, action: () => setPrinting(true) },
-        { label: 'Download as JSON', action: () => downloadFile(`${meta.title}.json`, 'application/json', JSON.stringify(ctl.deck, null, 2)) },
+        { label: 'Download as JSON', action: () => downloadFile(nameWithExt(meta.title, 'json'), 'application/json', JSON.stringify(ctl.deck, null, 2)) },
         'sep',
         { label: 'Delete presentation', danger: true, action: () => setDialog({ kind: 'delete' }) },
         'sep',

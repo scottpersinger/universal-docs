@@ -14,6 +14,7 @@ import { docxProblem } from '../shared/docxFormat.ts';
 import { pptxGaps } from '../shared/pptxFormat.ts';
 import type { DocKind, Workbook } from '../shared/types.ts';
 import { xlsxProblem } from '../shared/xlsxFormat.ts';
+import { titleBase } from '../shared/docNames.ts';
 import { docDocx } from './docxExport.ts';
 import { deckPptx, imageSource, loadFile, workbookXlsx } from './export.ts';
 import type { ImageStore } from './images.ts';
@@ -139,7 +140,7 @@ export async function uploadToWeb(web: Web, s: CopyStores, id: string, webFolder
   const { meta, data } = loaded;
   const folder = { folder: webFolder };
   if (data.kind === 'markdown') {
-    const { doc } = await call<{ doc: { id: string; title: string } }>(web, 'POST', '/api/markdown', { title: meta.title, text: data.markdown.text, ...folder });
+    const { doc } = await call<{ doc: { id: string; title: string } }>(web, 'POST', '/api/markdown', { title: titleBase(meta.title), text: data.markdown.text, ...folder });
     return { kind: 'markdown', id: doc.id, title: doc.title, warnings: [] };
   }
   const raw = data.kind === 'doc' ? data.doc : data.kind === 'deck' ? data.deck : data.workbook;
@@ -152,14 +153,14 @@ export async function uploadToWeb(web: Web, s: CopyStores, id: string, webFolder
   const warnings = notes(json, missing);
   const content = JSON.parse(json) as unknown;
   if (data.kind === 'doc') {
-    const { doc } = await call<{ doc: { id: string; title: string } }>(web, 'POST', '/api/docs', { title: meta.title, doc: content, ...folder });
+    const { doc } = await call<{ doc: { id: string; title: string } }>(web, 'POST', '/api/docs', { title: titleBase(meta.title), doc: content, ...folder });
     return { kind: 'doc', id: doc.id, title: doc.title, warnings };
   }
   if (data.kind === 'deck') {
-    const { deck } = await call<{ deck: { id: string; title: string } }>(web, 'POST', '/api/decks', { title: meta.title, deck: content, ...folder });
+    const { deck } = await call<{ deck: { id: string; title: string } }>(web, 'POST', '/api/decks', { title: titleBase(meta.title), deck: content, ...folder });
     return { kind: 'deck', id: deck.id, title: deck.title, warnings };
   }
-  const { sheet } = await call<{ sheet: { id: string; title: string; updatedAt: string } }>(web, 'POST', '/api/sheets', { title: meta.title, ...folder });
+  const { sheet } = await call<{ sheet: { id: string; title: string; updatedAt: string } }>(web, 'POST', '/api/sheets', { title: titleBase(meta.title), ...folder });
   await call(web, 'PUT', `/api/sheets/${encodeURIComponent(sheet.id)}`, { workbook: content, rev: sheet.updatedAt });
   return { kind: 'sheet', id: sheet.id, title: sheet.title, warnings };
 }
