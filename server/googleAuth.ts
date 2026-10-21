@@ -39,8 +39,8 @@ interface Pending {
   verifier: string;
   redirectUri: string;
   next: string;
-  /** Started from the desktop app (MCP Docs) in the system browser: the session goes back to the app. */
-  desktop: boolean;
+  /** Started from the desktop app (MCP Docs) in the system browser: the key the app collects the session with. */
+  desktop: string | null;
   expires: number;
 }
 
@@ -55,7 +55,7 @@ export class GoogleLogin {
   }
 
   /** The consent URL to send the browser to, and the state the callback must bring back. */
-  start(redirectUri: string, next: unknown, desktop = false): { url: string; state: string } {
+  start(redirectUri: string, next: unknown, desktop: string | null = null): { url: string; state: string } {
     const now = Date.now();
     for (const [k, v] of this.pending) if (v.expires < now) this.pending.delete(k);
     const state = randomBytes(24).toString('base64url');
@@ -76,7 +76,7 @@ export class GoogleLogin {
   }
 
   /** Finish the flow: check the state, trade the code for tokens and ask Google who signed in. */
-  async finish(state: string, code: string): Promise<{ identity: GoogleIdentity; next: string; desktop: boolean }> {
+  async finish(state: string, code: string): Promise<{ identity: GoogleIdentity; next: string; desktop: string | null }> {
     const st = this.pending.get(state);
     this.pending.delete(state);
     if (!st || st.expires < Date.now()) throw new GoogleLoginError('This sign-in link is invalid or has expired. Try again.');

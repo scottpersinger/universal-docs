@@ -184,27 +184,38 @@ describe('google sign-in', () => {
     });
   });
 
-  it('hands a sign-in in the system browser back to the desktop app with a one-time code', async () => {
+  it('hands a sign-in in the system browser back to the desktop app, which asks after it with its key', async () => {
     await withGoogleApp({ sub: 'g-d', email: 'desk@x.com', email_verified: true }, async (g) => {
-      let res = await g.inject({ method: 'GET', url: '/api/auth/google/start?desktop=1&next=%2Fdoc%2Fabc' });
+      const key = 'k'.repeat(40);
+      const status = async () => (await g.inject({ method: 'GET', url: `/api/auth/handoff/status?key=${key}` })).json().ready;
+      let res = await g.inject({ method: 'GET', url: `/api/auth/google/start?desktop=${key}&next=%2Fdoc%2Fabc` });
       const state = new URL(res.headers.location as string).searchParams.get('state')!;
+      expect(await status()).toBe(false);
       res = await g.inject({ method: 'GET', url: `/api/auth/google/callback?state=${state}&code=c`, headers: { cookie: cookieFrom(res) } });
-      // The browser gets no session, only a page that opens the app with a code.
+      // The browser gets no session, only a page saying to go back to the app.
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('text/html');
       expect(String(res.headers['set-cookie'] ?? '')).not.toContain('sid=');
-      const code = /mcpdocs:\/\/signed-in\?code=([\w-]+)/.exec(res.body)![1];
+      expect(res.body).toContain('MCP Docs');
+      expect(await status()).toBe(true);
 
-      // The app's Web tab trades it for a session, once.
-      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?code=${code}` });
+      // The app's Web tab trades the key for a session, once.
+      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?key=${key}` });
       expect(res.statusCode).toBe(302);
       expect(res.headers.location).toBe('/doc/abc');
       const sid = cookieFrom(res);
       expect(sid).toMatch(/^sid=/);
       expect((await g.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: sid } })).json().user.email).toBe('desk@x.com');
-      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?code=${code}` });
+      expect(await status()).toBe(false);
+      res = await g.inject({ method: 'GET', url: `/api/auth/handoff?key=${key}` });
       expect(res.headers.location).toMatch(/^\/login\?error=/);
       expect(res.headers['set-cookie']).toBeUndefined();
+
+      // A key too short to be the app's is not one: the sign-in is the browser's own.
+      res = await g.inject({ method: 'GET', url: '/api/auth/google/start?desktop=short' });
+      const st2 = new URL(res.headers.location as string).searchParams.get('state')!;
+      res = await g.inject({ method: 'GET', url: `/api/auth/google/callback?state=${st2}&code=c`, headers: { cookie: cookieFrom(res) } });
+      expect(res.statusCode).toBe(302);
     });
   });
 

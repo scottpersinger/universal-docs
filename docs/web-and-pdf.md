@@ -151,10 +151,11 @@ other kind "in this window" is one with the same frame (macOS tabs share it), el
 Only when a Web tab is first opened, never at start. Signed out, the Web tab shows the hosted app's sign-in
 page with Sign in and Create account. Email and password sign in inside the tab. Google refuses to sign in
 inside an embedded browser, so Continue with Google opens the system browser (`main.js` catches the
-navigation to `/api/auth/google/start` and adds `desktop=1`). After Google, the callback gives that browser
-no session but a page that opens `mcpdocs://signed-in?code=…`, a one-time code good for two minutes; the app
-(`open-url`) loads `/api/auth/handoff?code=…` in its Web tab, which sets the tab's session. The installed app
-declares the scheme (`build.protocols`); a copy run from a clone registers it only with `MCPDOCS_SCHEME=1`. The session is kept in the partition, so the app stays
+navigation to `/api/auth/google/start`, `googleSignIn`) with a random key of the app's (`desktop=<key>`).
+After Google, the callback gives that browser no session, only a page saying to go back to the app, and keeps
+the sign-in under the key for ten minutes. The app asks every two seconds whether it is there
+(`/api/auth/handoff/status`) and then loads `/api/auth/handoff?key=…` in its Web tab, which sets the tab's
+session, once. No link back to the app is needed, so it works in a copy run from a clone too. The session is kept in the partition, so the app stays
 signed in; the app menu has Sign out of Web. When the desktop signs in it registers as a device (its name is
 the computer's), which the hosted app shows and can remove.
 

@@ -117,8 +117,9 @@ type stripping; imports use `.ts` extensions.
   A window may instead be a Web tab: the hosted app (`UNIVERSAL_WEB_URL`) in a session of its own (`persist:web`),
   beside the Local tabs (`createWebWindow`, `isWeb`). Both kinds show a Local | Web switch beside the logo (`PlaceSwitch`, shown
   when the user agent has `MCPDocs/`) whose switch is an `mcpdocs://switch` link `main.js` catches (`handleAppLink`).
-  Google sign-in in a Web tab runs in the system browser and comes back as `mcpdocs://signed-in?code=` traded at
-  `/api/auth/handoff` (design in `docs/web-and-pdf.md`). Upload to Web… and Download to Folder… copy files between
+  Google sign-in in a Web tab runs in the system browser with a key of the app's, which the app asks after
+  (`googleSignIn`, `/api/auth/handoff/status`) and trades for the tab's session at `/api/auth/handoff` (design in
+  `docs/web-and-pdf.md`). Upload to Web… and Download to Folder… copy files between
   the folder and the web (`server/webCopy.ts`, `/api/web/*`, `WebCopyDialogs.tsx`): the folder's server asks the
   hosted app through `WebBridge`, which `main.js` answers with the Web tab's session (`webRequest`).
   The folder button left of the open folder's name (`LocalFolderMenu`) offers Open Folder… (`POST /api/local/choose-folder`,

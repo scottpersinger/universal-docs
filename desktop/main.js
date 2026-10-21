@@ -510,9 +510,36 @@ async function signOutOfWeb() {
 }
 
 /**
- * An mcpdocs:// link: the Local | Web switch (from a page of the app), or the code a Google sign-in in the system
- * browser hands back (from the system), traded for the Web tab's session (/api/auth/handoff).
+ * Google sign-in for a Web tab, in the system browser (Google refuses an app's own browser): the browser gets a
+ * random key of the app's along, and the app asks the hosted app every two seconds whether the sign-in under it
+ * has finished, then trades it for the tab's session (/api/auth/handoff). No link back to the app is needed.
  */
+function googleSignIn(start, win) {
+  const key = randomBytes(32).toString('base64url');
+  start.searchParams.set('desktop', key);
+  void shell.openExternal(start.href);
+  const deadline = Date.now() + 10 * 60 * 1000;
+  const check = async () => {
+    if (Date.now() > deadline) return;
+    let ready = false;
+    try {
+      const res = await webSession.fetch(`${WEB_URL}/api/auth/handoff/status?key=${key}`, { credentials: 'include', cache: 'no-store' });
+      ready = res.ok && (await res.json()).ready === true;
+    } catch {
+      // Offline for a moment: ask again.
+    }
+    if (!ready) return void setTimeout(check, 2000);
+    const target = win && !win.isDestroyed() ? win : (lastWindow(isWeb) ?? createWebWindow('about:blank', front));
+    void target.loadURL(`${WEB_URL}/api/auth/handoff?key=${key}`);
+    if (target.isMinimized()) target.restore();
+    target.show();
+    target.focus();
+    bringToFront();
+  };
+  setTimeout(check, 2000);
+}
+
+/** An mcpdocs:// link: the Local | Web switch (from a page of the app), or one from the system (a browser). */
 function handleAppLink(link, from = null) {
   let u;
   try {
@@ -544,15 +571,6 @@ function handleAppLink(link, from = null) {
     void win.loadURL(`${WEB_URL}${page}`);
     win.focus();
     return;
-  }
-  if (u.hostname === 'signed-in') {
-    const code = u.searchParams.get('code');
-    if (!code) return;
-    const url = `${WEB_URL}/api/auth/handoff?code=${encodeURIComponent(code)}`;
-    const win = lastWindow(isWeb) ?? createWebWindow('about:blank', front);
-    void win.loadURL(url);
-    win.focus();
-    bringToFront();
   }
 }
 
@@ -590,11 +608,10 @@ app.on('web-contents-created', (_e, contents) => {
     }
     if (!isWeb(BrowserWindow.fromWebContents(contents))) return;
     const u = new URL(url);
-    // Google refuses to sign in inside an app's browser, so the system browser does it and hands back a code.
+    // Google refuses to sign in inside an app's browser, so the system browser does it (googleSignIn).
     if (u.origin === WEB_ORIGIN && u.pathname === '/api/auth/google/start') {
       e.preventDefault();
-      u.searchParams.set('desktop', '1');
-      void shell.openExternal(u.href);
+      googleSignIn(u, BrowserWindow.fromWebContents(contents));
     } else if (u.origin !== WEB_ORIGIN) {
       e.preventDefault();
       void shell.openExternal(url);
@@ -688,7 +705,7 @@ app.on('open-file', (e, file) => {
   if (!started) launchFile = file;
   else void showFile(file).catch((err) => dialog.showErrorBox('MCP Docs', String(err.message ?? err)));
 });
-// mcpdocs:// links from the system (macOS): a Google sign-in handing back to the app.
+// mcpdocs:// links from the system (macOS): Download to MCP Docs in a browser.
 app.on('open-url', (e, url) => {
   e.preventDefault();
   if (!started) launchLink = url;
