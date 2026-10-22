@@ -271,7 +271,7 @@ export function FilePage() {
           <JsonViewer key={`${file.id}:${version}`} file={file} onEdit={() => setEditing(true)} />
         ) : file.text && !previewable ? (
           // Plain text, whatever its name: a log, a config file, source code.
-          <TextFileEditor key={`${file.id}:${version}`} file={file} onSaved={setFile} />
+          <TextFileEditor key={`${file.id}:${version}`} file={file} onSaved={setFile} canTail={local} />
         ) : previewable ? (
           // A picture that was saved over is asked for by a new address, so no earlier copy of it is shown.
           <ImageSelector key={`${file.id}:${version}`} url={version ? `${file.url}?v=${version}` : file.url} alt={file.filename} region={region} onChange={setRegion} />

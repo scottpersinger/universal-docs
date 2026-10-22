@@ -4900,6 +4900,14 @@ button.agent-tool-label:hover {
   overflow-wrap: normal;
   padding: 14px 18px;
 }
+.text-file-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
 .text-file-wait {
   padding: 24px;
 }

@@ -204,7 +204,8 @@ type stripping; imports use `.ts` extensions.
   in a presentation's slides by element (`deckFind.ts`, `DeckController.find`), in Markdown over the textarea
   (`TextareaMatches`) and in the preview, and in the JSON tree; text the page draws is highlighted with the CSS Custom
   Highlight API (`highlights.ts`). PDFs have none of their own yet (the browser's viewer).
-- A stored file that is plain text (`StoredFile.text`) is edited as text on its page (`TextFileEditor`); a JSON file
+- A stored file that is plain text (`StoredFile.text`) is edited as text on its page (`TextFileEditor`; in the desktop app its Tail follows a growing file, a log, by asking
+  `GET /api/files/:id` for the bytes past those it has, a Range request); a JSON file
   is shown as a tree first (`JsonViewer`: all open, Collapse all / Expand all, each object or array on its own; a very
   large one opens only its top levels), with Edit for the text.
 - A zip file's page lists what it holds and opens each file in it read-only (`client/src/components/ZipBrowser.tsx`,

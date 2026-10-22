@@ -1105,6 +1105,14 @@ describe('video files', () => {
     const rest = await app.inject({ method: 'GET', url: file.url, headers: { cookie, range: 'bytes=15-' } });
     expect([rest.headers['content-range'], rest.body]).toEqual(['bytes 15-19/20', 'fghij']);
     expect((await app.inject({ method: 'GET', url: file.url, headers: { cookie, range: 'bytes=50-' } })).statusCode).toBe(416);
+
+    // A download (a log, say) is read in parts too: what the text editor's Tail asks for as it grows.
+    const log = (await app.inject({ method: 'POST', url: '/api/files', headers: { cookie, 'content-type': 'application/octet-stream', 'x-filename': 'run.log' }, payload: Buffer.from('one\ntwo\n') })).json().file as { url: string };
+    const more = await app.inject({ method: 'GET', url: log.url, headers: { cookie, range: 'bytes=4-' } });
+    expect([more.statusCode, more.headers['content-range'], more.body]).toEqual([206, 'bytes 4-7/8', 'two\n']);
+    expect(more.headers['content-disposition']).toMatch(/^attachment/);
+    const none = await app.inject({ method: 'GET', url: log.url, headers: { cookie, range: 'bytes=8-' } });
+    expect([none.statusCode, none.headers['content-range']]).toEqual([416, 'bytes */8']);
   });
 });
 

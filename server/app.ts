@@ -1103,6 +1103,20 @@ export async function buildApp(opts: AppOptions) {
         .header('Cache-Control', 'no-store')
         .header('X-Content-Type-Options', 'nosniff');
 
+    // A file, or the part of it a Range header asks for: "a-b", "a-" (to the end) or "-n" (the last n bytes).
+    const sendRange = (req: FastifyRequest, reply: FastifyReply, file: string, size: number) => {
+      const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
+      if (!range || (!range[1] && !range[2])) return reply.header('Content-Length', size).send(createReadStream(file));
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start > end || start >= size) return reply.code(416).header('Content-Range', `bytes */${size}`).send();
+      return reply
+        .code(206)
+        .header('Content-Range', `bytes ${start}-${end}/${size}`)
+        .header('Content-Length', end - start + 1)
+        .send(createReadStream(file, { start, end }));
+    };
+
     // A PDF of a document, presentation, Markdown file or stored web page (server/pdf.ts): the file's page in the
     // app, loaded by a headless browser with a print ticket, or the web page's own HTML.
     const sendPdf = async (req: FastifyRequest, reply: FastifyReply, id: string) => {
@@ -1172,7 +1186,8 @@ export async function buildApp(opts: AppOptions) {
     r.get('/api/files/:id', async (req, reply) => {
       const f = storedFile(req);
       if (!f) return reply.code(404).send({ error: 'File not found' });
-      if (!PREVIEW_FILE_TYPES.includes(f.meta.type)) return attachment(reply, f.meta.filename, 'application/octet-stream').send(createReadStream(f.file));
+      // Any other file is a download; a part of one is what the text editor's Tail reads as a log grows.
+      if (!PREVIEW_FILE_TYPES.includes(f.meta.type)) return sendRange(req, attachment(reply, f.meta.filename, 'application/octet-stream').header('Accept-Ranges', 'bytes'), f.file, statSync(f.file).size);
       // A stored file never changes, except a picture the image editor saved over (asked for again each time,
       // and sent only if it changed); one in a mounted folder can.
       // Browsers that play QuickTime files (H.264) only do so when they are served as MP4.
@@ -1185,17 +1200,7 @@ export async function buildApp(opts: AppOptions) {
         reply.header('ETag', etag);
         if (req.headers['if-none-match'] === etag) return reply.code(304).send();
       }
-      const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
-      if (!range || (!range[1] && !range[2])) return reply.header('Content-Length', size).send(createReadStream(f.file));
-      // "a-b", "a-" (to the end) or "-n" (the last n bytes).
-      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
-      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-      if (start > end || start >= size) return reply.code(416).header('Content-Range', `bytes */${size}`).send();
-      return reply
-        .code(206)
-        .header('Content-Range', `bytes ${start}-${end}/${size}`)
-        .header('Content-Length', end - start + 1)
-        .send(createReadStream(f.file, { start, end }));
+      return sendRange(req, reply, f.file, size);
     });
 
     r.get('/api/files/:id/download', async (req, reply) => {
