@@ -495,7 +495,8 @@ describe('web and image search tools', () => {
       await expect(runServerTool('import_file', { url: `/api/images/${pastedId}` }, { ...env, userId: 'someone-else' })).rejects.toThrow(/no stored picture/);
       await expect(runServerTool('import_file', { url: '/api/images/11111111-2222-3333-4444-555555555555' }, env)).rejects.toThrow(/no stored picture/);
       // Problems come back as something to tell the user.
-      await expect(runServerTool('import_file', { url: 'https://cdn.example.com/notes.txt' }, env)).rejects.toThrow(/cannot be imported/);
+      // Plain text of any other kind is stored as it is.
+      expect(JSON.parse(await runServerTool('import_file', { url: 'https://cdn.example.com/notes.txt' }, env))).toMatchObject({ imported: true, kind: 'file', filename: 'notes.txt', type: 'text/plain' });
       await expect(runServerTool('import_file', { url: 'https://cdn.example.com/missing.png' }, env)).rejects.toThrow(/\(404\)/);
       await expect(runServerTool('import_file', { url: 'https://intranet.example.com/a.png' }, env)).rejects.toThrow(/public internet/);
       await expect(runServerTool('import_file', { url: 'http://169.254.169.254/latest' }, env)).rejects.toThrow(/public internet/);

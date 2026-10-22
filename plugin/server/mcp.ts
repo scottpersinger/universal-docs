@@ -501,7 +501,9 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
     {
       title: 'Import a file',
       description:
-        "Import a file into the user's library and open it in the app. The file is either one the user attached in the chat (file) or one at a public web address (url). Use this whenever the user wants a file uploaded, saved or added to their files. A Word, PowerPoint, Excel, CSV or Markdown file becomes an editable document, presentation, spreadsheet or Markdown document. A PDF, web page (.html), video or image is stored as it is and shown in the app's viewer. Any other type returns an error saying it cannot be imported; tell the user rather than working around it.",
+        version === 1
+          ? "Import a file into the user's library and open it in the app. The file is either one the user attached in the chat (file) or one at a public web address (url). Use this whenever the user wants a file uploaded, saved or added to their files. A Word, PowerPoint, Excel, CSV or Markdown file becomes an editable document, presentation, spreadsheet or Markdown document. A PDF, web page (.html), video or image is stored as it is and shown in the app's viewer. Any other type returns an error saying it cannot be imported; tell the user rather than working around it."
+          : "Import a file into the user's library and open it in the app. The file is either one the user attached in the chat (file) or one at a public web address (url). Use this whenever the user wants a file uploaded, saved or added to their files. A Word, PowerPoint, Excel, CSV or Markdown file becomes an editable document, presentation, spreadsheet or Markdown document. A PDF, web page (.html), video or image is stored as it is and shown in the app's viewer, and any other plain text file (.txt, .yaml, .json, a config or source file) is stored as it is and edited with edit_file. Any other type returns an error saying it cannot be imported; tell the user rather than working around it.",
       inputSchema: {
         file: attachedFile.optional().describe('The attached file. Give this or url.'),
         url: z.string().max(2000).optional().describe('The https address of a file on the web to import instead of an attachment: the file itself (an image, a PDF, a .docx), not a page that shows it.'),
@@ -613,7 +615,7 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
       {
         title: 'Upload a local file',
         description:
-          "Get a one-time address for uploading a file from your own computer into the user's library. Use it when you can read the file from disk and run a command such as curl. Send the file's bytes to the address with an HTTP POST, as the result shows. The file is then imported like import_file does: a Word, PowerPoint, Excel, CSV or Markdown file becomes an editable file, and a PDF, web page, video or image is stored as it is. The address works once, for five minutes. Call this once for each file.",
+          "Get a one-time address for uploading a file from your own computer into the user's library. Use it when you can read the file from disk and run a command such as curl. Send the file's bytes to the address with an HTTP POST, as the result shows. The file is then imported like import_file does: a Word, PowerPoint, Excel, CSV or Markdown file becomes an editable file, and a PDF, web page, video, image or any other plain text file (.yaml, .json, ...) is stored as it is. The address works once, for five minutes. Call this once for each file.",
         inputSchema: {
           file_name: z.string().min(1).max(200).describe('The name of the file with its extension, such as "report.pdf". The extension tells what kind of file it is.'),
           folder: folderPath.optional().describe('The path of the folder to put the file in, such as "Reports/2026". The folder must exist; make it with create_folder. Leave out for the top level.'),

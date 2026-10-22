@@ -81,7 +81,7 @@ describe('import from the app', () => {
     expect(hub.forUser('u1').open).toEqual({ kind: 'doc', id: r.file.id });
     expect((await post(ticket, docx)).status).toBe(401);
     expect((await post('bogus', docx)).status).toBe(401);
-    const text = await post(hub.issueTicket('u1'), Buffer.from('not an office file'));
+    const text = await post(hub.issueTicket('u1'), Buffer.from([0, 1, 2, 0xff]));
     expect(text.status).toBe(400);
     expect(((await text.json()) as { error: string }).error).toMatch(/Only Word documents/);
     // An edited picture from the image editor is saved over the stored one, with a ticket of the same account.

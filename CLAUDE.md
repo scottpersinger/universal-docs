@@ -176,7 +176,7 @@ type stripping; imports use `.ts` extensions.
   `crop` and box, not the picture.
 - Importing a file's bytes, whatever they are, is `server/importFile.ts` (`importBytes`: a Word, PowerPoint,
   Excel, CSV or Markdown file becomes a file the app edits, a Markdown file staying Markdown; a PDF, video, picture or web page is stored as
-  it is). Both assistants have an `import_file` tool over it that takes a web address; the server fetches it
+  it is, and so is any other plain text file, edited as text). Both assistants have an `import_file` tool over it that takes a web address; the server fetches it
   with `server/webFetch.ts`, which refuses addresses that are not on the public internet, at every redirect.
 - A PDF's text is read as Markdown by `server/pdfMarkdown.ts` (`pdfToMarkdown`, on LiteParse: PDFium for the text and
   layout, Tesseract OCR for the pages that are scans, in worker processes with a deadline; pictures are left out).

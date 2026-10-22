@@ -82,7 +82,7 @@ describe('MCP server', () => {
     const added = ['search_files', 'create_folder', 'move_file', 'upload_file', 'read_file', 'edit_file', 'convert_pdf_to_markdown', 'add_chart', 'edit_chart', 'delete_chart'];
     expect(newer.map((t) => t.name).filter((n) => !tools.some((t) => t.name === n))).toEqual(added);
     // Besides those, three tools differ: list_files knows about folders, transform_image puts pictures on top, and edit_elements places an arc by its own box or its center and radius.
-    expect(newer.filter((t) => !added.includes(t.name) && JSON.stringify(t) !== JSON.stringify(tools.find((o) => o.name === t.name))).map((t) => t.name)).toEqual(['list_files', 'transform_image', 'edit_elements']);
+    expect(newer.filter((t) => !added.includes(t.name) && JSON.stringify(t) !== JSON.stringify(tools.find((o) => o.name === t.name))).map((t) => t.name)).toEqual(['list_files', 'import_file', 'transform_image', 'edit_elements']);
     expect(newer.find((t) => t.name === 'transform_image')?.inputSchema.properties).toHaveProperty('overlays');
     expect(tools.find((t) => t.name === 'transform_image')?.inputSchema.properties).not.toHaveProperty('overlays');
     await v2.close();
@@ -495,10 +495,14 @@ describe('MCP server', () => {
     expect(html.data?.file).toMatchObject({ kind: 'file', title: 'chart.html', type: 'text/html' });
     attachments.set('https://files.example/page', Buffer.from('\n<!DOCTYPE html><html><body>Hi</body></html>'));
     expect((await call('import_file', { file: { file_id: 'file_1', download_url: 'https://files.example/page' }, title: 'Report' })).data?.file).toMatchObject({ kind: 'file', title: 'Report.html', type: 'text/html' });
-    attachments.set('https://files.example/notes.txt', Buffer.from('plain text'));
-    const txt = await call('import_file', { file: { file_id: 'file_1', download_url: 'https://files.example/notes.txt' } });
-    expect(txt.isError).toBe(true);
-    expect(txt.text).toMatch(/Only Word documents/);
+    // Any other plain text (a YAML file, say) is stored as it is, to edit as text; other bytes are refused.
+    attachments.set('https://files.example/manifest.yaml', Buffer.from('name: app\n'));
+    const yaml = await call('import_file', { file: { file_id: 'file_1', download_url: 'https://files.example/manifest.yaml', file_name: 'manifest.yaml' } });
+    expect(yaml.data?.file).toMatchObject({ kind: 'file', title: 'manifest.yaml' });
+    attachments.set('https://files.example/blob.bin', Buffer.from([0, 1, 2, 0xff]));
+    const bin = await call('import_file', { file: { file_id: 'file_1', download_url: 'https://files.example/blob.bin', file_name: 'blob.bin' } });
+    expect(bin.isError).toBe(true);
+    expect(bin.text).toMatch(/Only Word documents/);
     const local = await call('import_file', { file: { file_id: 'file_1', download_url: 'http://127.0.0.1/secret' } });
     expect(local.text).toMatch(/public https/);
     const missing = await call('import_file', { file: { file_id: 'file_1', download_url: 'https://files.example/gone.docx' } });

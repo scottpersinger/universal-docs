@@ -1,14 +1,15 @@
 // Importing a file's bytes into an account, whatever they are: a Word document, PowerPoint presentation, Excel
 // workbook, CSV or Markdown file becomes a file the app edits; a PDF, video, picture or web page is stored as
-// it is and shown in the viewer. Used by the plugin's import_file (a file attached in the chat) and by both
+// it is and shown in the viewer, and any other plain text file (YAML, JSON, a config or source file) as it is
+// too, edited in the text editor. Used by the plugin's import_file (a file attached in the chat) and by both
 // assistants' import_file for a file at a web address.
 import { CsvError, MAX_CSV_CHARS } from '../shared/csv.ts';
 import { validateDeck } from '../shared/deck.ts';
 import { validateDoc } from '../shared/doc.ts';
 import { markdownTitle, MAX_MARKDOWN_CHARS, newMarkdownDoc } from '../shared/markdown.ts';
-import { HTML_TYPE, isHtmlName, MAX_VIDEO_BYTES, videoTypeOf, type SheetMeta, type StoredFile } from '../shared/types.ts';
+import { fileTypeOf, HTML_TYPE, isHtmlName, MAX_TEXT_EDIT_BYTES, MAX_VIDEO_BYTES, videoTypeOf, type SheetMeta, type StoredFile } from '../shared/types.ts';
 import { importDocx, isDocx } from './docxImport.ts';
-import type { FileStore } from './files.ts';
+import { looksLikeText, type FileStore } from './files.ts';
 import type { ImageStore } from './images.ts';
 import { isPdf, MAX_PDF_BYTES } from './pdfMarkdown.ts';
 import { importPptx, isPptx } from './pptxImport.ts';
@@ -123,7 +124,12 @@ export async function importBytes(stores: ImportStores, userId: string, bytes: B
     if (e instanceof ImportError || e instanceof CsvError) throw new ImportFileError(e.message);
     throw e;
   }
+  // Any other text (YAML, JSON, a config or source file) is kept as it is, to read and edit as text.
+  if (bytes.length <= MAX_TEXT_EDIT_BYTES && looksLikeText(bytes)) {
+    const named = fileName || `${baseTitle || 'text'}.txt`;
+    return stored(named, fileTypeOf(named) ?? 'text/plain');
+  }
   throw new ImportFileError(
-    `This type of file${name ? ` (${fileName})` : ''} cannot be imported. Only Word documents (.docx), PowerPoint presentations (.pptx), Excel workbooks (.xlsx), CSV files (.csv), Markdown files (.md), PDFs (.pdf), web pages (.html), videos (.mp4, .mov, .webm) and images (PNG, JPEG, GIF, WebP) can be imported.`,
+    `This type of file${name ? ` (${fileName})` : ''} cannot be imported. Only Word documents (.docx), PowerPoint presentations (.pptx), Excel workbooks (.xlsx), CSV files (.csv), Markdown files (.md), PDFs (.pdf), web pages (.html), videos (.mp4, .mov, .webm), images (PNG, JPEG, GIF, WebP) and plain text files (.txt, .yaml, .json, ...) can be imported.`,
   );
 }
