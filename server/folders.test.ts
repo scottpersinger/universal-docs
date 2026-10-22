@@ -40,10 +40,12 @@ afterAll(async () => {
 describe('folder paths', () => {
   it('accepts plain names and refuses ones that could reach elsewhere', () => {
     expect(cleanFolderName('  Reports ')).toBe('Reports');
-    for (const bad of ['', '.', '..', '.git', 'a/b', 'a\\b', 'a:b', 7]) expect(cleanFolderName(bad)).toBeNull();
+    expect(cleanFolderName('.git')).toBe('.git');
+    for (const bad of ['', '.', '..', 'a/b', 'a\\b', 'a:b', 7]) expect(cleanFolderName(bad)).toBeNull();
     expect(cleanFolderPath('')).toBe('');
     expect(cleanFolderPath('a/b')).toBe('a/b');
-    for (const bad of ['../a', 'a/../b', 'a/ b', 'a/.x']) expect(cleanFolderPath(bad)).toBeNull();
+    expect(cleanFolderPath('a/.x')).toBe('a/.x');
+    for (const bad of ['../a', 'a/../b', 'a/./b', 'a/ b']) expect(cleanFolderPath(bad)).toBeNull();
     expect(folderTrail('a/b')).toEqual([{ name: 'a', path: 'a' }, { name: 'b', path: 'a/b' }]);
   });
 });

@@ -4,11 +4,11 @@
 export const MAX_FOLDER_DEPTH = 12;
 const MAX_NAME_CHARS = 100;
 
-/** A folder name as typed, tidied; null if it cannot be one (empty, "." or "..", hidden, or with a character file systems refuse). */
+/** A folder name as typed, tidied; null if it cannot be one (empty, "." or "..", or with a character file systems refuse). A hidden one (".config") can. */
 export function cleanFolderName(input: unknown): string | null {
   if (typeof input !== 'string') return null;
   const name = input.trim().replace(/[. ]+$/, '');
-  if (!name || name.length > MAX_NAME_CHARS || name.startsWith('.')) return null;
+  if (!name || name.length > MAX_NAME_CHARS) return null;
   if (/[\u0000-\u001f\\/<>:"|?*]/.test(name)) return null;
   return name;
 }

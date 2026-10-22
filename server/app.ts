@@ -1551,16 +1551,15 @@ export async function buildApp(opts: AppOptions) {
       }
       const rel = path.relative(folder.root, target);
       const parts = rel.split(path.sep);
-      // Inside the open folder and listed there (no part of it hidden or skipped).
-      const inside = !path.isAbsolute(rel) && !parts.some((p) => p === '..' || p.startsWith('.') || p === 'node_modules');
+      // Inside the open folder and listed there (no part of it skipped).
+      const inside = !path.isAbsolute(rel) && !parts.some((p) => p === '..' || p === 'node_modules' || p === '.DS_Store');
       if (st.isDirectory()) {
         if (inside) return { folder: rel.split(path.sep).join('/') };
         if (!opts.local?.openFolder) return reply.code(400).send({ error: 'Only folders inside the open folder can be opened here.' });
         opts.local.openFolder(target);
         return { switching: true };
       }
-      if (!st.isFile() || !LISTED_EXTS.has(path.extname(target).toLowerCase())) return reply.code(400).send({ error: `${path.basename(target)} is not a kind of file this app opens.` });
-      if (path.basename(target).startsWith('.')) return reply.code(400).send({ error: 'Hidden files cannot be opened here.' });
+      if (!st.isFile()) return reply.code(400).send({ error: `${path.basename(target)} is not a file or a folder.` });
       if (inside) return { file: rel.split(path.sep).join('/') };
       if (!opts.local?.openFile) return reply.code(400).send({ error: 'This file is outside the open folder. Open its folder to see it.' });
       opts.local.openFile(target, false);
@@ -1584,8 +1583,8 @@ export async function buildApp(opts: AppOptions) {
     // The library's file at a path inside the open folder: what to show for it.
     r.get('/api/local/resolve', async (req, reply) => {
       const rel = (req.query as { file?: unknown }).file;
-      // A path inside the folder: no part of it may lead out, or be hidden.
-      if (!folder || typeof rel !== 'string' || !rel || rel.split('/').some((p) => !p || p.startsWith('.') || p.includes('\\'))) return reply.code(404).send({ error: 'File not found' });
+      // A path inside the folder: no part of it may lead out.
+      if (!folder || typeof rel !== 'string' || !rel || rel.split('/').some((p) => !p || p === '.' || p === '..' || p.includes('\\'))) return reply.code(404).send({ error: 'File not found' });
       const kind = listedKind(rel);
       const id = kind === 'file' ? (storedFiles as LocalFileStore).idOf(req.user!.id, rel) : (sheets as LocalSheetStore).idOf(req.user!.id, rel);
       if (!id) return reply.code(404).send({ error: 'File not found' });

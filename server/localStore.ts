@@ -70,6 +70,10 @@ export const listedKind = (file: string): DocKind | 'file' => DOC_TYPES[extOf(fi
 const MAX_DEPTH = 8;
 const MAX_FILES = 5000;
 const SKIP_DIRS = new Set(['node_modules']);
+/** Folders that are listed but not walked through when looking through the whole tree (a search, the assistant's file list): a repository's history is many files, none of them documents. */
+const SKIP_IN_WALK = new Set(['.git']);
+/** Finder's own bookkeeping, never shown, though every other hidden file and folder is. */
+const SYSTEM_FILES = new Set(['.DS_Store']);
 /** How long a search of the whole tree may take before it returns what it has. */
 const FIND_BUDGET_MS = 60_000;
 
@@ -106,7 +110,7 @@ export class LocalFolder {
    * still be opened: the system's Library in a home directory, which is vast and holds no documents.
    */
   private skipInWalk(rel: string): boolean {
-    return rel === 'Library' && this.root === path.resolve(homedir());
+    return SKIP_IN_WALK.has(path.posix.basename(rel)) || (rel === 'Library' && this.root === path.resolve(homedir()));
   }
 
   abs(rel: string): string {
@@ -114,8 +118,8 @@ export class LocalFolder {
   }
 
   /**
-   * The files and the folders directly inside one folder. Hidden entries, node_modules and symbolic links
-   * are skipped. `all` lists every file; otherwise only the kinds the app shows.
+   * The files and the folders directly inside one folder, hidden ones (".env", ".git") included. node_modules,
+   * .DS_Store and symbolic links are skipped. `all` lists every file; otherwise only the kinds the app shows.
    */
   scanDir(folder: string, all = true): { files: Found[]; dirs: string[] } {
     const files: Found[] = [];
@@ -127,7 +131,7 @@ export class LocalFolder {
       return { files, dirs }; // Unreadable or gone: nothing to show.
     }
     for (const e of entries) {
-      if (e.name.startsWith('.')) continue;
+      if (SYSTEM_FILES.has(e.name)) continue;
       const rel = joinFolder(folder, e.name);
       if (e.isDirectory()) {
         if (!SKIP_DIRS.has(e.name)) dirs.push(rel);
@@ -195,7 +199,7 @@ export class LocalFolder {
           continue; // Unreadable: nothing to find there.
         }
         for (const e of entries) {
-          if (e.name.startsWith('.')) continue;
+          if (SYSTEM_FILES.has(e.name)) continue;
           const rel = joinFolder(folder, e.name);
           const hit = e.name.toLowerCase().includes(q);
           if (e.isDirectory()) {

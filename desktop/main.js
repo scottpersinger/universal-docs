@@ -665,8 +665,7 @@ async function showFile(file) {
   const current = frontServer();
   const rel = current ? path.relative(current.dir, file) : '';
   const parts = rel.split(path.sep);
-  // The open folder's server lists no hidden files or folders, so a file among them opens in its own folder.
-  if (rel && !path.isAbsolute(rel) && !parts.some((p) => p === '..' || p.startsWith('.'))) showPage(`/open?file=${encodeURIComponent(parts.join('/'))}`, current);
+  if (rel && !path.isAbsolute(rel) && !parts.some((p) => p === '..')) showPage(`/open?file=${encodeURIComponent(parts.join('/'))}`, current);
   else await openFile(file, false);
 }
 

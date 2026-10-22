@@ -48,6 +48,10 @@ beforeAll(async () => {
   writeFileSync(at('.git', 'hidden.md'), 'hidden');
   writeFileSync(at('node_modules', 'pkg', 'README.md'), 'dependency');
   writeFileSync(at('script.py'), 'print(1)');
+  writeFileSync(at('.env'), 'KEY=1\n');
+  mkdirSync(at('.config'));
+  writeFileSync(at('.config', 'settings.yaml'), 'a: 1\n');
+  writeFileSync(at('.DS_Store'), 'finder');
   app = await buildApp({ dataDir, local: { dir: folder } });
 });
 
@@ -64,18 +68,27 @@ describe('a mounted folder', () => {
     expect(me.body.local?.dir).toBe(path.resolve(folder));
   });
 
-  it('shows one folder at a time: its folders and every file in it, without hidden folders and node_modules', async () => {
+  it('shows one folder at a time: its folders and every file in it, hidden ones too, without node_modules', async () => {
     const top = await library();
-    expect(top.folders).toEqual([{ name: 'reports', path: 'reports' }]);
+    expect(top.folders).toEqual([
+      { name: '.config', path: '.config' },
+      { name: '.git', path: '.git' },
+      { name: 'reports', path: 'reports' },
+    ]);
     expect(top.docs.map((d) => [d.title, d.kind])).toEqual([['notes.md', 'markdown']]);
     // A file the app cannot show is listed too, as a stored file of a type it does not know.
     expect(top.files.map((f) => [f.filename, f.type]).sort()).toEqual([
+      ['.env', 'application/octet-stream'],
       ['scan.pdf', 'application/pdf'],
       ['script.py', 'application/octet-stream'],
     ]);
     const reports = await library('reports');
     expect(reports.folders).toEqual([]);
     expect(reports.docs.map((d) => [d.title, d.format, d.folder])).toEqual([['stock.csv', 'csv', 'reports']]);
+    // A hidden folder opens like any other. (The assistant's list, below, does not look through .git, a repository's history.)
+    // Both are plain text, so they open in the text editor.
+    expect((await library('.config')).files.map((f) => [f.filename, f.text])).toEqual([['settings.yaml', true]]);
+    expect(top.files.find((f) => f.filename === '.env')?.text).toBe(true);
     expect((await call('GET', '/api/library?folder=missing')).status).toBe(404);
     expect((await call('GET', '/api/library?folder=..')).status).toBe(404);
   });
@@ -508,7 +521,7 @@ describe('recents: the files last opened on the machine', () => {
       expect((await req('POST', '/api/local/open', { path: path.join(elsewhere, 'gone.pdf') })).status).toBe(404);
       expect((await req('POST', '/api/local/open', { path: 'plan.md' })).status).toBe(400);
       expect((await req('GET', `/api/local/resolve?file=${encodeURIComponent('../plan.md')}`)).status).toBe(404);
-      expect((await req('GET', `/api/local/resolve?file=${encodeURIComponent('.git/hidden.md')}`)).status).toBe(404);
+      expect((await req('GET', `/api/local/resolve?file=${encodeURIComponent('.git/hidden.md')}`)).status).toBe(200);
       expect((await req('GET', '/api/local/resolve?file=nope.md')).status).toBe(404);
       expect(asked).toHaveLength(1);
     } finally {
@@ -548,8 +561,12 @@ describe('recents: the files last opened on the machine', () => {
       expect((await open(`  ${elsewhere}  `)).body).toEqual({ switching: true });
       expect(dirs).toEqual([elsewhere]);
 
-      // Not a file the app opens, not there, nothing given.
-      expect((await open(path.join(elsewhere, 'tool.py'))).status).toBe(400);
+      // Any file, hidden ones too: a script outside it opens in its folder, a hidden file in it is shown here.
+      expect((await open(path.join(elsewhere, 'tool.py'))).body).toEqual({ switching: true });
+      writeFileSync(at('bypath', '.env'), 'KEY=1\n');
+      expect((await open('bypath/.env')).body).toEqual({ file: 'bypath/.env' });
+
+      // Not there, nothing given.
       expect((await open(path.join(elsewhere, 'gone.md'))).status).toBe(404);
       expect((await open('  ')).status).toBe(400);
 
