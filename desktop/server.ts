@@ -36,6 +36,7 @@ const app = await buildApp({
     token: process.env.LOCAL_TOKEN || undefined,
     cookie: process.env.LOCAL_COOKIE || undefined,
     openFile: (file, fromRecents = true) => process.send?.({ openFile: file, fromRecents }),
+    openFileInTab: (file) => process.send?.({ openFileInTab: file }),
     openFolder: (dir) => process.send?.({ openFolder: dir }),
     chooseFolder: () => process.send?.({ chooseFolder: true }),
     connectAgent: () => process.send?.({ connectAgent: true }),

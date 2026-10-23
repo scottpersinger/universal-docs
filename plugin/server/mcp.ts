@@ -77,6 +77,11 @@ export interface McpOptions {
   version?: McpVersion;
   /** The desktop app's server, for agents on the same machine: it is named MCP Docs. */
   local?: boolean;
+  /**
+   * The desktop app's file at a path on this machine (open_path): the open folder's document or stored file, or,
+   * for a file outside it, `elsewhere`, its folder, which the app opens in a new tab. Throws ToolError when there is no such file.
+   */
+  openPath?: (path: string) => { kind: LibraryKind; id: string } | { elsewhere: string };
   /** Fetches files ChatGPT hands to import_file (tests pass a fake). */
   fetchFn?: typeof fetch;
 }
@@ -533,23 +538,46 @@ export function createMcpServer(service: FileService, opts: McpOptions): McpServ
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       ...(ui ? { _meta: rendersApp() } : {}),
     },
-    async ({ kind: k, id }) =>
-      guard(async () => {
-        service.show({ kind: k, id });
-        if (k === 'file' && version === 1) return ok({ file: service.storedFile(id), ...service.state() });
-        if (k === 'file') {
-          // Its text comes back too, when it has any (a PDF, a web page, a text file), and a picture is shown.
-          const file = service.storedFile(id);
-          const read = await service.readStored(id, undefined, undefined, version >= 2).catch((e: unknown) => (e instanceof ToolError ? null : Promise.reject(e)));
-          const f = service.hub.files.get(service.userId, id);
-          const picture = f && f.meta.type.startsWith('image/') ? await shownImage(f.file, f.meta.type, f.meta.size) : [];
-          const result = ok({ file, ...(read ? { text_content: read, note: 'Read more of it with read_doc and this id as doc_id (from, to).' } : {}), ...service.state() });
-          return picture.length ? { ...result, content: [...result.content, ...picture] } : result;
-        }
-        const outline = k === 'doc' ? await service.editDoc(id, 'read_doc', {}) : k === 'markdown' ? await service.editMarkdown(id, 'read_doc', {}) : k === 'deck' ? await service.editDeck(id, 'read_deck', {}) : await service.editSheet(id, 'get_sheet_overview', {});
-        return ok({ ...outline, ...service.state() });
-      }),
+    async ({ kind: k, id }) => guard(() => openShown(k, id)),
   );
+
+  // Show a file in the app and return what open_file returns about it.
+  const openShown = async (k: LibraryKind, id: string): Promise<CallToolResult> => {
+    service.show({ kind: k, id });
+    if (k === 'file' && version === 1) return ok({ file: service.storedFile(id), ...service.state() });
+    if (k === 'file') {
+      // Its text comes back too, when it has any (a PDF, a web page, a text file), and a picture is shown.
+      const file = service.storedFile(id);
+      const read = await service.readStored(id, undefined, undefined, version >= 2).catch((e: unknown) => (e instanceof ToolError ? null : Promise.reject(e)));
+      const f = service.hub.files.get(service.userId, id);
+      const picture = f && f.meta.type.startsWith('image/') ? await shownImage(f.file, f.meta.type, f.meta.size) : [];
+      const result = ok({ file, ...(read ? { text_content: read, note: 'Read more of it with read_doc and this id as doc_id (from, to).' } : {}), ...service.state() });
+      return picture.length ? { ...result, content: [...result.content, ...picture] } : result;
+    }
+    const outline = k === 'doc' ? await service.editDoc(id, 'read_doc', {}) : k === 'markdown' ? await service.editMarkdown(id, 'read_doc', {}) : k === 'deck' ? await service.editDeck(id, 'read_deck', {}) : await service.editSheet(id, 'get_sheet_overview', {});
+    return ok({ ...outline, ...service.state() });
+  };
+
+  // The desktop app opens a file by its path on this machine, as Finder does.
+  const openPath = opts.openPath;
+  if (openPath) {
+    server.registerTool(
+      'open_path',
+      {
+        title: 'Open a file by its path',
+        description:
+          "Open a file on this computer in the app by its path: absolute, from the home folder (~/...), or relative to the folder open in the app. A file in the open folder is opened as open_file opens it, and the same comes back. A file anywhere else is opened in a new tab of the app, on the file's own folder; the tools then work on that folder (call list_files or open_path again there).",
+        inputSchema: { path: z.string().min(1).max(4096).describe('The path of the file.') },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      async ({ path }) =>
+        guard(async () => {
+          const found = openPath(path.trim());
+          if ('elsewhere' in found) return ok({ opened_in_new_tab: true, folder: found.elsewhere, note: 'The file is outside the open folder, so the app is opening its folder in a new tab, which becomes the one the tools work on.' });
+          return openShown(found.kind, found.id);
+        }),
+    );
+  }
 
   // --- Pictures: look at one, and edit one exactly (the app's image editor does the editing) ---
 

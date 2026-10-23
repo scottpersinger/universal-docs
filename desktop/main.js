@@ -380,6 +380,7 @@ async function startServer(dir) {
   // be shown (one of Recents), another folder, or a page (a file an agent opened).
   child.on('message', (msg) => {
     if (msg && typeof msg.openFile === 'string') void openFile(msg.openFile, msg.fromRecents !== false, windowFor(server)).catch(failed);
+    if (msg && typeof msg.openFileInTab === 'string') void openFile(msg.openFileInTab, false).catch(failed);
     if (msg && typeof msg.openFolder === 'string') void openFolder(msg.openFolder, '/', windowFor(server)).catch(failed);
     if (msg?.chooseFolder) void chooseFolder(windowFor(server)).catch(failed);
     if (msg?.connectAgent) void connectAgent().catch(failed);

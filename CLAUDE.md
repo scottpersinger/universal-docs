@@ -153,7 +153,8 @@ type stripping; imports use `.ts` extensions.
   share an undo group), asks about destructive changes (`confirmationFor`, opening the panel), and is saved by
   the editor. A window that no longer has the file answers `unavailable`, and the tool runs headless on the
   stored file (`FileService.editDoc`/`editDeck`/`editSheet`). `render_slide`, `export_deck` and `select_range`
-  only run in the window, and only the desktop MCP server has them (`McpOptions.local`).
+  only run in the window, and only the desktop MCP server has them (`McpOptions.local`), with `open_path`, which
+  opens a file by its path (`McpOptions.openPath`: in the folder as `open_file` does, else in a new tab on its own folder, `openFileInTab`).
   There `transform_image` (remove_background included) runs in the window in front too, whatever it shows
   (`WindowTools.runInFront`, `FileService.editImageInWindow`), with the built-in assistant's image tool; the
   hosted plugin's goes to its app's job queue (`runImageJob`) and cannot remove a background.

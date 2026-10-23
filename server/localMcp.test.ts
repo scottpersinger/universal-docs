@@ -14,13 +14,17 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 let origin: string;
 const shown: string[] = [];
 const changed: string[] = [];
+const inTab: string[] = [];
+let elsewhere: string;
 
 beforeAll(async () => {
   dataDir = mkdtempSync(path.join(tmpdir(), 'local-mcp-data-'));
   folder = mkdtempSync(path.join(tmpdir(), 'local-mcp-folder-'));
   writeFileSync(path.join(folder, 'notes.md'), '# Notes\n\nFirst line.\n');
   writeFileSync(path.join(folder, 'LICENSE'), 'MIT License\n\nCopyright (c) 2025 Someone\n');
-  app = await buildApp({ dataDir, local: { dir: folder, mcp: { token: TOKEN, show: (page) => shown.push(page), changed: (id) => changed.push(id) } } });
+  elsewhere = mkdtempSync(path.join(tmpdir(), 'local-mcp-elsewhere-'));
+  writeFileSync(path.join(elsewhere, 'plan.md'), '# Plan\n');
+  app = await buildApp({ dataDir, local: { dir: folder, openFileInTab: (file) => inTab.push(file), mcp: { token: TOKEN, show: (page) => shown.push(page), changed: (id) => changed.push(id) } } });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const addr = app.server.address();
   origin = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -30,6 +34,7 @@ afterAll(async () => {
   await app.close();
   rmSync(dataDir, { recursive: true, force: true });
   rmSync(folder, { recursive: true, force: true });
+  rmSync(elsewhere, { recursive: true, force: true });
 });
 
 async function connect(token = TOKEN): Promise<Client> {
@@ -70,6 +75,29 @@ describe("the desktop app's MCP server", () => {
     const r = await client.callTool({ name: 'insert_content', arguments: { position: 'end', markdown: 'Added by an agent.' } });
     expect(r.isError).not.toBe(true);
     expect(readFileSync(path.join(folder, 'notes.md'), 'utf8')).toContain('Added by an agent.');
+    await client.close();
+  });
+
+  it('opens a file by its path: in the folder as open_file does, anywhere else in a new tab on its folder', async () => {
+    const client = await connect();
+    for (const given of ['notes.md', path.join(folder, 'notes.md')]) {
+      const r = await client.callTool({ name: 'open_path', arguments: { path: given } });
+      expect(r.isError).not.toBe(true);
+      expect(text(r)).toContain('Notes');
+      expect(shown.at(-1)).toMatch(/^\/md\//);
+    }
+    // A stored file (plain text) too.
+    const license = await client.callTool({ name: 'open_path', arguments: { path: 'LICENSE' } });
+    expect(text(license)).toContain('MIT License');
+    expect(shown.at(-1)).toMatch(/^\/f\//);
+
+    const outside = await client.callTool({ name: 'open_path', arguments: { path: path.join(elsewhere, 'plan.md') } });
+    expect(JSON.parse(text(outside))).toMatchObject({ opened_in_new_tab: true, folder: elsewhere });
+    expect(inTab).toEqual([path.join(elsewhere, 'plan.md')]);
+
+    const missing = await client.callTool({ name: 'open_path', arguments: { path: 'gone.md' } });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toContain('There is no file at');
     await client.close();
   });
 

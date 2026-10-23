@@ -48,6 +48,7 @@ import { LISTED_EXTS, listedKind, LocalFileStore, LocalFolder, LocalFolders, Loc
 import { openedFiles, recentFiles, RecentOpens, recentsAvailable, type Recents } from './recents.ts';
 import { googleFromEnv, GoogleLogin, GoogleLoginError, GOOGLE_STATE_TTL_MS, type GoogleOptions } from './googleAuth.ts';
 import { mountPlugin } from '../plugin/server/mount.ts';
+import { ToolError } from '../plugin/server/files.ts';
 import { mailerFromEnv, type Mailer } from './mail.ts';
 import { RevisionFeed } from './revisionFeed.ts';
 import { SheetStore, validateWorkbook } from './sheets.ts';
@@ -142,6 +143,8 @@ export interface AppOptions {
      * in place of this one. Without it only files inside the folder can be opened from Recents.
      */
     openFile?: (file: string, fromRecents?: boolean) => void;
+    /** Show a file outside the folder in a new tab on its own folder (the desktop app does it), for the MCP server's open_path. */
+    openFileInTab?: (file: string) => void;
     /** Open another folder in place of this one (the desktop app does it; this server ends). */
     openFolder?: (dir: string) => void;
     /** Ask the person for a folder to open, in the desktop app's Open Folder dialog. */
@@ -330,8 +333,32 @@ export async function buildApp(opts: AppOptions) {
   // The desktop app's MCP server, and the file its window shows (the one the tools act on by default). Its
   // edit tools on a file open in a window run in that window (windowTools.ts).
   const windowTools = opts.local?.mcp ? new WindowTools() : null;
+  // A file named by its path, for the MCP server's open_path: one in the folder is its document or stored file;
+  // for any other the app opens the file's own folder in a new tab.
+  const openLocalPath = (given: string): { kind: LibraryKind; id: string } | { elsewhere: string } => {
+    const target = path.resolve(folder!.root, given === '~' || given.startsWith('~/') ? path.join(homedir(), given.slice(1)) : given);
+    let isFile = false;
+    try {
+      isFile = statSync(target).isFile();
+    } catch {
+      // Not there: answered below.
+    }
+    if (!isFile) throw new ToolError(`There is no file at ${target}.`);
+    const rel = path.relative(folder!.root, target);
+    const parts = rel.split(path.sep);
+    if (path.isAbsolute(rel) || parts.some((p) => p === '..' || p === 'node_modules')) {
+      if (!opts.local?.openFileInTab) throw new ToolError(`${target} is outside the open folder (${folder!.root}).`);
+      opts.local.openFileInTab(target);
+      return { elsewhere: path.dirname(target) };
+    }
+    const file = parts.join('/');
+    const kind = listedKind(file);
+    const id = kind === 'file' ? (storedFiles as LocalFileStore).idOf(localUser!.id, file) : (sheets as LocalSheetStore).idOf(localUser!.id, file);
+    if (!id) throw new ToolError(`${file} is not a file the app shows.`);
+    return { kind, id };
+  };
   const localMcp = opts.local?.mcp
-    ? await mountLocalMcp(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, folders, userId: localUser!.id, token: opts.local.mcp.token, publicUrl: opts.local.mcp.url ?? null, show: opts.local.mcp.show, changed: opts.local.mcp.changed, live: windowTools, pdf: pdfMaker ?? undefined })
+    ? await mountLocalMcp(app, { db, dataDir: opts.dataDir, sheets, images, files: storedFiles, folders, userId: localUser!.id, token: opts.local.mcp.token, publicUrl: opts.local.mcp.url ?? null, show: opts.local.mcp.show, changed: opts.local.mcp.changed, live: windowTools, pdf: pdfMaker ?? undefined, openPath: openLocalPath })
     : null;
   app.addHook('onRequest', async (req, reply) => {
     // The headless browser making a PDF carries a print ticket instead of a session (server/pdf.ts): it is the

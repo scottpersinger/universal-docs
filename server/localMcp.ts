@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import { FileHub, type FileService, type LibraryKind, type LiveEditor } from '../plugin/server/files.ts';
 import { createPluginHandler, mcpVersion } from '../plugin/server/http.ts';
-import { MCP_VERSIONS } from '../plugin/server/mcp.ts';
+import { MCP_VERSIONS, type McpOptions } from '../plugin/server/mcp.ts';
 import type { DB } from './db.ts';
 import type { FileStore } from './files.ts';
 import type { Folders } from './folders.ts';
@@ -38,6 +38,8 @@ export interface LocalMcpOptions {
   live?: LiveEditor | null;
   /** Makes PDFs of files (pdf.ts), for export_pdf. */
   pdf?: PdfMaker;
+  /** A file on this machine by its path, for open_path (McpOptions.openPath). */
+  openPath?: McpOptions['openPath'];
 }
 
 /** The app's address of a file. */
@@ -59,7 +61,7 @@ export async function mountLocalMcp(app: FastifyInstance, opts: LocalMcpOptions)
   hub.onFileChanged = (_userId, id) => opts.changed?.(id);
   hub.live = opts.live ?? null;
   // The model's tools only: none of the parts for ChatGPT's own app (its UI resource and app-only tools).
-  const handler = createPluginHandler({ hub, oauth: null, devUserId: opts.userId, publicUrl: opts.publicUrl, webDir: '', production: true, mcp: { level: 'tools', local: true } });
+  const handler = createPluginHandler({ hub, oauth: null, devUserId: opts.userId, publicUrl: opts.publicUrl, webDir: '', production: true, mcp: { level: 'tools', local: true, openPath: opts.openPath } });
   app.addHook('onRequest', (req, reply, done) => {
     const pathname = (req.raw.url ?? '/').split('?')[0];
     // Uploads and file links carry their own one-time tickets and tokens; OAuth is not served here.

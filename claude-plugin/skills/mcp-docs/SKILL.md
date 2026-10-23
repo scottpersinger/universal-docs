@@ -31,10 +31,10 @@ The server is the app itself, at `http://127.0.0.1:39217/mcp`. It only answers w
 ## The open folder
 
 The tools work on the one folder open in the app, not on the whole disk. Folder paths in the tools
-(`"Reports/2026"`) are relative to it, and `""` is its top. You cannot switch folders with the tools: if
-the file the person means is elsewhere, ask them to open its folder in the app (the folder button left of
-the folder's name, or File › Open Folder…). A file outside the open folder can also be brought in with
-`upload_file` (it is copied into the folder, imported like any other).
+(`"Reports/2026"`) are relative to it, and `""` is its top. To open a file you know the path of, anywhere on
+this computer, use `open_path`: a file in the open folder opens as `open_file` opens it; a file elsewhere opens
+in a new tab of the app on its own folder, which the tools then work on. A file outside the open folder can
+also be copied into it with `upload_file` (imported like any other).
 
 The files are real files on disk, written back in their own format when changed: a document stays a
 `.docx`, a presentation a `.pptx`, a spreadsheet an `.xlsx`. Use the tools rather than editing these files
