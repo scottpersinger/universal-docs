@@ -23,6 +23,10 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: scottpersinger/universal-docs
+  GitHubRepoIds:
+    Type: String
+    Default: scottpersinger@80947/universal-docs@1398781862
+    Description: The repository as GitHub's immutable OIDC subject names it (owner@id/name@id)
   GitHubOidcProviderArn:
     Type: String
     Description: The account's token.actions.githubusercontent.com OIDC provider
@@ -297,7 +301,11 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                # GitHub's subject names the repository either way: with its owner's and its own ids when the
+                # repository uses immutable subjects (GitHubRepoIds; `gh api repos/<repo>/actions/oidc/customization/sub`).
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                  - !Sub repo:${GitHubRepoIds}:ref:refs/heads/main
       Policies:
         - PolicyName: deploy
           PolicyDocument:
