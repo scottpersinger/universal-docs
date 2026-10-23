@@ -1,4 +1,4 @@
-# MCP Docs on the web, on AWS: one EC2 instance running the app's container (the Dockerfile at the root) behind
+# MCP Docs on the web, on AWS: one EC2 instance running the app's container (deploy/aws/Dockerfile) behind
 # Caddy, which serves HTTPS with a certificate it gets for the domain. The app is one process with SQLite and its
 # files on a local disk (DATA_DIR), so it runs as exactly one copy: the data lives on its own EBS volume, kept
 # when the stack or instance goes, with a snapshot every day.

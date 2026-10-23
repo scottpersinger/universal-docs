@@ -33,7 +33,7 @@ jobs:
 
       - name: Build and push the image
         run: |
-          docker build --build-arg GIT_COMMIT_SHA=${{ github.sha }} -t "$IMAGE" -t "${{ vars.AWS_ECR_REPOSITORY }}:latest" .
+          docker build -f deploy/aws/Dockerfile --build-arg GIT_COMMIT_SHA=${{ github.sha }} -t "$IMAGE" -t "${{ vars.AWS_ECR_REPOSITORY }}:latest" .
           docker push "$IMAGE"
           docker push "${{ vars.AWS_ECR_REPOSITORY }}:latest"
 

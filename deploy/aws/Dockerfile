@@ -1,4 +1,5 @@
-# The hosted app's image for AWS (deploy/aws). Railway builds its own with Railpack; this one matches it: Node from
+# The hosted app's image for AWS, built from the repository root: `docker build -f deploy/aws/Dockerfile .`. Railway builds
+# its own with Railpack (kept out of the root, where Railway would build with it instead); this one matches it: Node from
 # .node-version, git for app-change jobs, Chromium for PDFs, and the dev dependencies kept so those jobs can
 # typecheck, test and rebuild in the container.
 FROM node:24.22.1-bookworm-slim

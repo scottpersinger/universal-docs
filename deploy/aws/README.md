@@ -1,7 +1,7 @@
 # MCP Docs on AWS
 
 `template.yaml` is a CloudFormation stack (us-west-2) for the hosted app on one EC2 instance: the app's container
-(the root `Dockerfile`) behind Caddy, which gets the HTTPS certificate for the domain itself. The data (`/data`:
+(`deploy/aws/Dockerfile`, built from the repository root) behind Caddy, which gets the HTTPS certificate for the domain itself. The data (`/data`:
 SQLite, files, Caddy's certificates) is on its own EBS volume, snapshotted daily and kept for 14 days; the volume
 is kept if the stack is deleted. Shell access is Session Manager (`aws ssm start-session --target <instance>`),
 the app's log is the CloudWatch group `/mcpdocs/app`.
