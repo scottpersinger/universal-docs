@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { folderTrail } from '../../../shared/folders.ts';
 import { useAuth } from '../auth.tsx';
-import { fromRecents, listingHref, RECENTS_HREF } from '../listing.ts';
+import { fromRecents, listingHref, RECENTS_HREF, returnTo } from '../listing.ts';
 
 export { lastListingHref } from '../listing.ts';
 
@@ -11,7 +11,11 @@ export { lastListingHref } from '../listing.ts';
  */
 export function FolderCrumbs({ folder, onLeave }: { folder?: string; onLeave?: () => void }) {
   const { local } = useAuth();
-  const root = local ? (local.dir.split(/[\\/]/).filter(Boolean).pop() ?? local.dir) : 'Your files';
+  // A scratch pad leads back to the folder it was opened from: these lists move the window there (HomePage).
+  const back = local ? returnTo() : null;
+  if (back) folder = back.folder;
+  const dir = back?.dir ?? local?.dir;
+  const root = dir ? (dir.split(/[\\/]/).filter(Boolean).pop() ?? dir) : 'Your files';
   return (
     <nav className="folder-crumbs" aria-label="Folder">
       {/* A file opened from Recents leads back there first. */}

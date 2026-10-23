@@ -45,6 +45,7 @@ import { ThumbnailStrip } from '../deck/ThumbnailStrip.tsx';
 import { SLIDE_TRAY } from '../panelSize.ts';
 import { appName } from '../brand.ts';
 import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
+import { useOpenInTab } from '../components/OpenInTab.tsx';
 
 /** Natural size of an image, for sizing a new image element. */
 function imageSize(src: string): Promise<{ w: number; h: number } | undefined> {
@@ -473,11 +474,13 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
     { label: 'Layout', submenu: LAYOUT_IDS.map((l) => ({ label: LAYOUT_NAMES[l], checked: ctl.deck.slides[index]?.layout === l, action: () => ctl.setLayout(l, index) })) },
   ];
 
+  const openInTab = useOpenInTab();
   const menus: { key: string; label: string; items: () => MenuItem[] }[] = [
     {
       key: 'file',
       label: 'File',
       items: () => [
+        ...openInTab.items,
         {
           label: 'New presentation',
           action: async () => {
@@ -594,6 +597,7 @@ function DeckWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta
 
   return (
     <div className="workbench deck-page">
+      {openInTab.dialog}
       {!printing && (
         <>
           <header className="wb-header">

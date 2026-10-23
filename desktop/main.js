@@ -379,10 +379,10 @@ async function startServer(dir) {
   // Later the server asks, for the window it serves that the person is using, for a file outside its folder to
   // be shown (one of Recents), another folder, or a page (a file an agent opened).
   child.on('message', (msg) => {
-    if (msg && typeof msg.openFile === 'string') void openFile(msg.openFile, msg.fromRecents !== false, windowFor(server)).catch(failed);
+    if (msg && typeof msg.openFile === 'string') void openFile(msg.openFile, msg.fromRecents !== false, windowFor(server), typeof msg.back === 'string' ? msg.back : '').catch(failed);
     if (msg && typeof msg.openFileInTab === 'string') void openFile(msg.openFileInTab, false).catch(failed);
-    if (msg && typeof msg.openFolder === 'string') void openFolder(msg.openFolder, '/', windowFor(server)).catch(failed);
-    if (msg?.chooseFolder) void chooseFolder(windowFor(server)).catch(failed);
+    if (msg && typeof msg.openFolder === 'string') void openFolder(msg.openFolder, msg.folder ? `/?folder=${encodeURIComponent(msg.folder)}` : '/', msg.inTab ? null : windowFor(server)).catch(failed);
+    if (msg?.chooseFolder) void chooseFolder(windowFor(server), msg.inTab === true).catch(failed);
     if (msg?.connectAgent) void connectAgent().catch(failed);
     if (msg && typeof msg.show === 'string' && msg.show.startsWith('/')) showPage(msg.show, server);
     if (msg && typeof msg.fileChanged === 'string') fileChanged(msg.fileChanged, server);
@@ -654,11 +654,12 @@ async function openFolder(dir, landing = '/', win = null) {
 /**
  * Show a file that is not in the window's folder: its own folder becomes the window's (or a new tab's, with
  * no window), and the window starts on the file. One of Recents (`fromRecents`) keeps Recents as the list its
- * breadcrumbs lead back to.
+ * breadcrumbs lead back to; `back` (a query: `?backDir=…&backFolder=…`) names the folder they lead back to instead.
  */
-async function openFile(file, fromRecents = true, win = null) {
+async function openFile(file, fromRecents = true, win = null, back = '') {
   if (!isDir(path.dirname(file))) throw new Error(`"${file}" is no longer there.`);
-  await openFolder(path.dirname(file), `/open?file=${encodeURIComponent(path.basename(file))}${fromRecents ? '&from=recents' : ''}`, win);
+  const extra = back.startsWith('?') ? `&${back.slice(1)}` : '';
+  await openFolder(path.dirname(file), `/open?file=${encodeURIComponent(path.basename(file))}${fromRecents ? '&from=recents' : ''}${extra}`, win);
 }
 
 /** Show a file the system asked the app to open (Finder): in the folder in front when it is there, else in a new tab on its own folder. */
@@ -769,12 +770,12 @@ async function offerDefaultApp(first = false) {
   }
 }
 
-/** Ask for a folder and show it in `win` (the window it was asked from), or in a new window with none. */
-async function chooseFolder(win = null) {
+/** Ask for a folder and show it in `win` (the window it was asked from), or in a new tab (`inTab`, or with no window). */
+async function chooseFolder(win = null, inTab = false) {
   const options = { title: 'Open folder', properties: ['openDirectory', 'createDirectory'], defaultPath: serverOf(win)?.dir ?? app.getPath('documents') };
   const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   if (res.canceled || !res.filePaths[0]) return false;
-  await openFolder(res.filePaths[0], '/', win);
+  await openFolder(res.filePaths[0], '/', inTab ? null : win);
   return true;
 }
 

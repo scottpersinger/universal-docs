@@ -87,6 +87,12 @@ export interface FolderInfo {
   path: string;
 }
 
+/** A folder on the desktop app's machine its folder menu offers: its name and absolute path. */
+export interface LocalPlace {
+  name: string;
+  path: string;
+}
+
 /** A signature the user keeps for signing PDFs (server/signatures.ts). */
 export interface SavedSignature {
   id: string;
@@ -207,9 +213,18 @@ export const api = {
   answerToolCall: (id: string, answer: { content: string; isError?: boolean; images?: { mediaType: string; data: string }[] } | { unavailable: true }) => request<{ ok: true }>('POST', `/api/local/tool-calls/${encodeURIComponent(id)}`, answer),
   openLocal: (path: string) => request<{ file?: string; switching?: true }>('POST', '/api/local/open', { path }),
   /** The desktop app: open a file or folder by its path (absolute, ~/..., or in the open folder). */
-  openLocalPath: (path: string) => request<{ file?: string; folder?: string; switching?: true }>('POST', '/api/local/open-path', { path }),
+  /** With `tab`, one outside the open folder opens in a new tab (`opened`); one inside is named for the page to open. */
+  openLocalPath: (path: string, tab = false) => request<{ file?: string; folder?: string; switching?: true; opened?: true }>('POST', '/api/local/open-path', tab ? { path, tab } : { path }),
+  scratchPads: () => request<{ pads: { name: string; modified: string }[] }>('GET', '/api/local/scratch-pads'),
+  /** A scratch pad by its name, or a new one. */
+  /** `folder`, the one of the open folder being shown: where its breadcrumbs lead back to when the window moves to show it. */
+  openScratchPad: (name: string | undefined, folder: string) => request<{ file?: string; switching?: true }>('POST', '/api/local/scratch-pad', name ? { name, folder } : { folder }),
+  /** The desktop app: the folders its folder menu offers (the usual ones in the home folder). */
+  localPlaces: () => request<{ places: LocalPlace[] }>('GET', '/api/local/places'),
   /** The desktop app: show its Open Folder dialog. */
-  chooseLocalFolder: () => request<{ ok: true }>('POST', '/api/local/choose-folder'),
+  /** Move the window back to the folder a file was opened from (listing.ts' returnTo). */
+  returnToFolder: (dir: string, folder: string) => request<{ switching: true }>('POST', '/api/local/return', { dir, at: folder }),
+  chooseLocalFolder: (tab = false) => request<{ ok: true }>('POST', '/api/local/choose-folder', tab ? { tab } : undefined),
   /** The desktop app: show how to connect an agent to its MCP server (and who is connected). */
   connectAgent: () => request<{ ok: true }>('POST', '/api/local/connect-agent'),
   /** The library's file at a path inside the open folder. */

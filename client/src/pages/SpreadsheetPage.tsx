@@ -40,6 +40,7 @@ import { SheetController } from '../state/controller.ts';
 import { csvGuard, lockedGuard, EDIT_NOT_ALLOWED, xlsxGuard } from '../state/store.ts';
 import { useController } from '../state/useController.ts';
 import { appName } from '../brand.ts';
+import { useOpenInTab } from '../components/OpenInTab.tsx';
 
 function downloadFile(name: string, mime: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -359,8 +360,9 @@ function Workbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta: Sh
     return () => window.removeEventListener('keydown', onKey, true);
   }, [ctl]);
 
+  const openInTab = useOpenInTab();
   const menus: { key: string; label: string; items: () => MenuItem[] }[] = [
-    { key: 'file', label: 'File', items: () => fileItems(host) },
+    { key: 'file', label: 'File', items: () => [...openInTab.items, ...fileItems(host)] },
     { key: 'edit', label: 'Edit', items: () => editItems(host) },
     { key: 'view', label: 'View', items: () => viewItems(host) },
     { key: 'insert', label: 'Insert', items: () => insertItems(host) },
@@ -381,6 +383,7 @@ function Workbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta: Sh
 
   return (
     <div className="workbench">
+      {openInTab.dialog}
       <header className="wb-header">
         <Link to={lastListingHref()} className="wb-logo" title="Back to the file list" onClick={() => void ctl.saver.flush()}>
           <Logo size={32} />

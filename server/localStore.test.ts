@@ -1,10 +1,10 @@
 import ExcelJS from 'exceljs';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { SheetMeta, StoredFile, Workbook } from '../shared/types.ts';
-import { buildApp, LOCAL_COOKIE } from './app.ts';
+import { buildApp, LOCAL_COOKIE, SCRATCH_DIR, scratchPadName } from './app.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { LISTED_EXTS } from './localStore.ts';
 import { APP_RECENTS, listable, openedFiles, parseRecents, recentFiles, RecentOpens } from './recents.ts';
@@ -540,12 +540,16 @@ describe('recents: the files last opened on the machine', () => {
     writeFileSync(at('bypath', 'notes.md'), '# Notes\n');
     const files: [string, boolean | undefined][] = [];
     const dirs: string[] = [];
-    let chosen = 0;
+    const inTabs: string[] = [];
+    const chosen: (boolean | undefined)[] = [];
     let connecting = 0;
-    const app = await buildApp({ dataDir: data, local: { dir: folder, recents: null, openFile: (f, r) => files.push([f, r]), openFolder: (d) => dirs.push(d), chooseFolder: () => chosen++, connectAgent: () => connecting++ } });
-    const open = async (p: unknown) => {
-      const res = await app.inject({ method: 'POST', url: '/api/local/open-path', payload: { path: p } });
-      return { status: res.statusCode, body: res.json() as { file?: string; folder?: string; switching?: true } };
+    const app = await buildApp({
+      dataDir: data,
+      local: { dir: folder, recents: null, openFile: (f, r) => files.push([f, r]), openFileInTab: (f) => inTabs.push(f), openFolder: (d, t) => dirs.push(t ? `tab:${d}` : d), chooseFolder: (t) => chosen.push(t), connectAgent: () => connecting++ },
+    });
+    const open = async (p: unknown, tab?: boolean) => {
+      const res = await app.inject({ method: 'POST', url: '/api/local/open-path', payload: { path: p, ...(tab ? { tab } : {}) } });
+      return { status: res.statusCode, body: res.json() as { file?: string; folder?: string; switching?: true; opened?: true } };
     };
     try {
       // In the open folder, absolute or relative to it.
@@ -566,18 +570,94 @@ describe('recents: the files last opened on the machine', () => {
       writeFileSync(at('bypath', '.env'), 'KEY=1\n');
       expect((await open('bypath/.env')).body).toEqual({ file: 'bypath/.env' });
 
+      // In a new tab (an editor's File menu): one inside is named for the page to open, one outside opens in a tab.
+      expect((await open('bypath/notes.md', true)).body).toEqual({ file: 'bypath/notes.md' });
+      expect((await open('bypath/inner', true)).body).toEqual({ folder: 'bypath/inner' });
+      expect((await open(path.join(elsewhere, 'plan.md'), true)).body).toEqual({ opened: true });
+      expect(inTabs).toEqual([path.join(elsewhere, 'plan.md')]);
+      expect((await open(elsewhere, true)).body).toEqual({ opened: true });
+      expect(dirs).toEqual([elsewhere, `tab:${elsewhere}`]);
+      expect(files).toHaveLength(2);
+
       // Not there, nothing given.
       expect((await open(path.join(elsewhere, 'gone.md'))).status).toBe(404);
       expect((await open('  ')).status).toBe(400);
 
+      // The folder menu's folders: the usual ones in the home folder.
+      const { places } = (await app.inject({ method: 'GET', url: '/api/local/places' })).json() as { places: { name: string; path: string }[] };
+      expect(places[0]).toEqual({ name: 'HOME', path: homedir() });
+      expect(places.slice(1).every((p) => path.dirname(p.path) === homedir())).toBe(true);
+
       expect((await app.inject({ method: 'POST', url: '/api/local/choose-folder' })).statusCode).toBe(200);
-      expect(chosen).toBe(1);
+      expect((await app.inject({ method: 'POST', url: '/api/local/choose-folder', payload: { tab: true } })).statusCode).toBe(200);
+      expect(chosen).toEqual([false, true]);
       expect((await app.inject({ method: 'POST', url: '/api/local/connect-agent' })).statusCode).toBe(200);
       expect(connecting).toBe(1);
     } finally {
       await app.close();
       rmSync(data, { recursive: true, force: true });
       rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it('names a new scratch pad for the day it was made', () => {
+    const taken = new Set<string>();
+    const day = new Date(2026, 8, 5);
+    const next = () => {
+      const n = scratchPadName((x) => taken.has(x), day);
+      taken.add(n);
+      return n;
+    };
+    expect([next(), next(), next()]).toEqual(['Scratch pad.md', 'Scratch pad-sep05.md', 'Scratch pad-sep05-2.md']);
+  });
+
+  it('lists scratch pads, makes a new one in ~/.config/mcp-docs and opens one by its name', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'sheetsweb-home-'));
+    const data = mkdtempSync(path.join(tmpdir(), 'sheetsweb-localdata-'));
+    const before = process.env.HOME;
+    process.env.HOME = home;
+    const files: [string, string | undefined][] = [];
+    const returned: [string, boolean | undefined, string | undefined][] = [];
+    const app = await buildApp({ dataDir: data, local: { dir: folder, recents: null, openFile: (f, _r, back) => files.push([f, back]), openFolder: (d, t, f) => returned.push([d, t, f]) } });
+    const dir = path.join(home, SCRATCH_DIR);
+    const atPads = await buildApp({ dataDir: mkdtempSync(path.join(tmpdir(), 'sheetsweb-localdata-')), local: { dir, recents: null } });
+    const list = async () => ((await app.inject({ method: 'GET', url: '/api/local/scratch-pads' })).json() as { pads: { name: string }[] }).pads.map((p) => p.name);
+    const make = async (on = app, name?: string, at = '') => (await on.inject({ method: 'POST', url: '/api/local/scratch-pad', payload: name ? { name, folder: at } : { folder: at } })).json();
+    try {
+      // None yet, and no folder.
+      expect(await list()).toEqual([]);
+      // From another folder: made, folder and all, then the app opens it in its folder, leading back to the one shown.
+      mkdirSync(at('Reports', '2026'), { recursive: true });
+      expect(await make(app, undefined, 'Reports/2026')).toEqual({ switching: true });
+      expect(files).toEqual([[path.join(dir, 'Scratch pad.md'), `?${new URLSearchParams({ backDir: folder, backFolder: 'Reports/2026' })}`]]);
+      expect(readFileSync(path.join(dir, 'Scratch pad.md'), 'utf8')).toBe('');
+      expect(await list()).toEqual(['Scratch pad.md']);
+
+      // With its folder open: a new one is named for the day, and shown here.
+      const second = (await make(atPads)) as { file: string };
+      expect(second.file).toMatch(/^Scratch pad-[a-z]{3}\d{2}\.md$/);
+      utimesSync(path.join(dir, second.file), new Date(), new Date(Date.now() + 60_000));
+      expect(await list()).toEqual([second.file, 'Scratch pad.md']);
+
+      // One by its name, as it was left.
+      writeFileSync(path.join(dir, 'Scratch pad.md'), 'Call Sam\n');
+      expect(await make(atPads, 'Scratch pad.md')).toEqual({ file: 'Scratch pad.md' });
+      expect(readFileSync(path.join(dir, 'Scratch pad.md'), 'utf8')).toBe('Call Sam\n');
+      expect((await app.inject({ method: 'POST', url: '/api/local/scratch-pad', payload: { name: '../notes.md' } })).statusCode).toBe(400);
+      expect((await app.inject({ method: 'POST', url: '/api/local/scratch-pad', payload: { name: 'gone.md' } })).statusCode).toBe(404);
+
+      // Back from a scratch pad: the window returns to the folder it came from, at the folder it showed.
+      expect((await atPads.inject({ method: 'POST', url: '/api/local/return', payload: { dir: folder, at: 'Reports' } })).statusCode).toBe(400); // atPads cannot move windows
+      expect((await app.inject({ method: 'POST', url: '/api/local/return', payload: { dir: folder, at: 'Reports' } })).json()).toEqual({ switching: true });
+      expect(returned).toEqual([[folder, false, 'Reports']]);
+      expect((await app.inject({ method: 'POST', url: '/api/local/return', payload: { dir: 'relative' } })).statusCode).toBe(400);
+      expect((await app.inject({ method: 'POST', url: '/api/local/return', payload: { dir: path.join(home, 'gone') } })).statusCode).toBe(404);
+    } finally {
+      process.env.HOME = before;
+      await app.close();
+      await atPads.close();
+      rmSync(data, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

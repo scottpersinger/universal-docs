@@ -12,8 +12,9 @@ import { HomeIcon } from '../components/Logo.tsx';
 import { Modal, PromptModal } from '../components/Modal.tsx';
 import { MoveModal } from '../components/MoveModal.tsx';
 import { useFavicon } from '../favicon.ts';
-import { RECENTS_PARAM, rememberListing, useListingScroll } from '../listing.ts';
-import { LocalFolderMenu } from '../components/LocalFolderMenu.tsx';
+import { RECENTS_PARAM, rememberListing, rememberReturn, returnTo, useListingScroll } from '../listing.ts';
+import { LocalFolderHome, LocalFolderMenu, LocalFolderParent, parentDir } from '../components/LocalFolderMenu.tsx';
+import { ScratchPadTile } from '../components/ScratchPadTile.tsx';
 import { openFromRecents } from './OpenLocalFile.tsx';
 import { FilePreviewFrame } from '../components/FilePreviewFrame.tsx';
 import { checkImportFile, imageTypeOf, isKnownImport, isCsvFile, isHtmlFile, isImageFile, isMarkdownFile, isPdfFile, isPowerPointFile, isVideoFile, isWordFile, titleFromFileName } from '../importFile.ts';
@@ -36,7 +37,24 @@ const fileItem = (x: StoredFile): LibraryItem => ({ id: x.id, title: x.filename,
 /** The last part of a directory's path, to name the desktop app's mounted folder. */
 const dirName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
+/**
+ * The file list. In a window that moved to a scratch pad's folder to show it, a way back to a list (breadcrumbs,
+ * the logo, Home) moves the window back to the folder it came from instead (listing.ts' returnTo).
+ */
 export function HomePage() {
+  const [params] = useSearchParams();
+  const [back, setBack] = useState(returnTo);
+  useEffect(() => {
+    if (!back) return;
+    rememberReturn(null);
+    api.returnToFolder(back.dir, params.get(RECENTS_PARAM) ? '' : (params.get('folder') ?? '')).catch(() => setBack(null));
+    // Once, as the page opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return back ? <div className="page-loading">Opening…</div> : <FileList />;
+}
+
+function FileList() {
   const { local, user } = useAuth();
   const navigate = useNavigate();
   useFavicon('home');
@@ -325,11 +343,32 @@ export function HomePage() {
           <PlaceSwitch />
         </>
       }
-      listTitle={local ? <span title={local.dir}>{dirName(local.dir)}</span> : undefined}
-      listIcon={local ? <LocalFolderMenu onFile={(rel) => navigate(`/open?file=${encodeURIComponent(rel)}`)} onFolder={openFolder} /> : undefined}
+      listTitle={local ? dirName(local.dir) : undefined}
+      crumbsShown={local ? 2 : undefined}
+      crumbTitle={local ? (p) => (p ? `${local.dir.replace(/[\\/]+$/, '')}/${p}` : local.dir) : undefined}
+      listIcon={
+        local ? (
+          <>
+            <LocalFolderMenu onFile={(rel) => navigate(`/open?file=${encodeURIComponent(rel)}`)} onFolder={openFolder} />
+            <LocalFolderHome onFolder={openFolder} />
+            {/* At the folder's top the folder above it on disk is the parent crumb; below, the trail has one. */}
+            {!folder && <LocalFolderParent dir={local.dir} />}
+          </>
+        ) : undefined
+      }
       folder={folderTrail(folder)}
       folders={recents ? [] : folders}
       onOpenFolder={openFolder}
+      up={
+        recents
+          ? undefined
+          : folder
+            ? { folder: folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '', onOpen: () => openFolder(folder.includes('/') ? folder.slice(0, folder.lastIndexOf('/')) : '') }
+            : // At the top of the desktop app's folder: its parent, which the window moves to.
+              local && parentDir(local.dir)
+              ? { onOpen: () => void api.openLocalPath(parentDir(local.dir)!).catch((e: Error) => setError(e.message)) }
+              : undefined
+      }
       otherList={
         user
           ? {
@@ -465,17 +504,22 @@ export function HomePage() {
       importLabel="Import file"
       tiles={
         local ? (
-          <div>
-            <button className="new-sheet-tile help-tile agent-tile" onClick={() => void api.connectAgent()}>
-              <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="help-tile-title">Connect your agent</span>
-              <span className="help-tile-sub">
-                Claude Code and more <span aria-hidden="true">→</span>
-              </span>
-            </button>
-          </div>
+          <>
+            <div>
+              <button className="new-sheet-tile help-tile agent-tile" onClick={() => void api.connectAgent()}>
+                <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0zM12 16v5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="help-tile-title">Connect your agent</span>
+                <span className="help-tile-sub">
+                  Claude Code &amp; more <span aria-hidden="true">→</span>
+                </span>
+              </button>
+            </div>
+            <div>
+              <ScratchPadTile folder={folder} onError={setError} />
+            </div>
+          </>
         ) : undefined
       }
       importing={importing}

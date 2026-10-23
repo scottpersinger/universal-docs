@@ -159,6 +159,10 @@ export interface FileLibraryProps {
   listTitle?: ReactNode;
   /** Shown left of the top of the library's name (the desktop app's folder menu). */
   listIcon?: ReactNode;
+  /** A breadcrumb's tooltip, by the folder's path ('' for the top): the desktop app's full path on disk. */
+  crumbTitle?(path: string): string;
+  /** Show only the last this many breadcrumbs (the desktop app shows the folder and the one above it). */
+  crumbsShown?: number;
   /**
    * Folders. With `folder` set (even to '', the top) the heading becomes breadcrumbs, the folders inside
    * the current one are listed above its files, and "New folder" is offered.
@@ -166,6 +170,11 @@ export interface FileLibraryProps {
   folder?: { name: string; path: string }[];
   folders?: { name: string; path: string }[];
   onOpenFolder?(path: string): void;
+  /**
+   * The ".." row over the folders: up one level. `folder` is the library's folder it opens, which files can be
+   * dropped on (none at the top of the desktop app's folder, where it opens the folder's parent).
+   */
+  up?: { folder?: string; onOpen(): void };
   onCreateFolder?(name: string): Promise<void>;
   onDeleteFolder?(path: string): Promise<void>;
   /**
@@ -559,6 +568,9 @@ export function FileLibrary(props: FileLibraryProps) {
   /** Where a search result is, shown after its name. */
   const whereTag = (folder: string) => <span className="found-in">in {folder || top}</span>;
   const trail = props.folder;
+  const up = !results && !otherShown && !q && typeFilter === 'all' ? props.up : undefined;
+  const upDrop = up?.folder !== undefined ? dropTarget(up.folder) : {};
+  const upClass = up?.folder !== undefined ? dropClass(up.folder) : '';
   const openFolder = (path: string) => {
     // A page that keeps the search drops it by going to the folder's own address.
     if (!props.search) setFilter('');
@@ -673,7 +685,7 @@ export function FileLibrary(props: FileLibraryProps) {
             {props.onGettingStarted && !helpHidden && (
               <div className="tile-box">
                 <button className="new-sheet-tile help-tile" onClick={props.onGettingStarted}>
-                  <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2v.1h5V16c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                   <span className="help-tile-title">Getting started</span>
@@ -724,7 +736,7 @@ export function FileLibrary(props: FileLibraryProps) {
                 }}
                 aria-label={props.importLabel}
               >
-                <svg width="44" height="44" viewBox="0 0 24 24" aria-hidden="true">
+                <svg width="34" height="34" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 3v12m0 0-4.5-4.5M12 15l4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
@@ -749,14 +761,16 @@ export function FileLibrary(props: FileLibraryProps) {
             </h2>
           ) : trail ? (
             <h2 className={`breadcrumbs${other ? (otherShown ? ' list-tab' : ' list-tab active') : ''}`} aria-label="Folder">
-              {[{ name: '', path: '' }, ...trail].map((f, i, all) => (
+              {[{ name: '', path: '' }, ...trail].map((f, i, all) => i < Math.max(0, all.length - (props.crumbsShown ?? all.length)) ? null : (
                 <span key={f.path}>
-                  {i > 0 && <span className="crumb-sep">/</span>}
+                  {i > Math.max(0, all.length - (props.crumbsShown ?? all.length)) && <span className="crumb-sep">/</span>}
                   {i === all.length - 1 && !otherShown ? (
-                    <span aria-current="page">{i === 0 ? (props.listTitle ?? 'Your files') : f.name}</span>
+                    <span aria-current="page" title={props.crumbTitle?.(f.path)}>
+                      {i === 0 ? (props.listTitle ?? 'Your files') : f.name}
+                    </span>
                   ) : (
                     // While the other list is shown, the folder's own name leads back to its files.
-                    <button className={`crumb${dropClass(f.path)}`} onClick={() => (i === all.length - 1 ? other!.onSelect(false) : openFolder(f.path))} {...dropTarget(f.path)}>
+                    <button className={`crumb${dropClass(f.path)}`} title={props.crumbTitle?.(f.path)} onClick={() => (i === all.length - 1 ? other!.onSelect(false) : openFolder(f.path))} {...dropTarget(f.path)}>
                       {i === 0 ? (props.listTitle ?? 'Your files') : f.name}
                     </button>
                   )}
@@ -818,10 +832,20 @@ export function FileLibrary(props: FileLibraryProps) {
         {moveError && <div className="form-error">{moveError}</div>}
         {items === null ? (
           <div className="muted">Loading…</div>
-        ) : visible.length === 0 && folders.length === 0 && (error || otherFooter) ? null : visible.length === 0 && folders.length === 0 ? (
+        ) : visible.length === 0 && folders.length === 0 && (error || otherFooter) ? null : visible.length === 0 && folders.length === 0 && !up ? (
           <div className="empty-state">{otherShown && typeFilter === 'all' && !q ? other!.empty : typeFilter !== 'all' ? `No ${TYPE_GROUPS.find(([g]) => g === typeFilter)![1].toLowerCase().replace('pdfs', 'PDFs')} ${results ? 'found' : q ? 'match your search' : 'here'}.` : results ? 'Nothing found in any folder.' : q ? (props.onFind ? 'Nothing here matches your search.' : 'Nothing matches your search.') : trail?.length ? 'This folder is empty.' : 'No files yet. Create a spreadsheet, presentation or document to get started.'}</div>
         ) : view === 'grid' ? (
           <div className="file-grid">
+            {up && (
+              <div className={`file-card${upClass}`} onClick={up.onOpen} title="Up one folder" {...upDrop}>
+                <div className="file-thumb folder">
+                  <FolderIcon size={64} />
+                </div>
+                <div className="file-card-foot">
+                  <div className="file-card-name">..</div>
+                </div>
+              </div>
+            )}
             {folders.map((f) => (
               <div key={`folder:${f.path}`} className={`file-card${dropClass(f.path)}`} onClick={() => openFolder(f.path)} {...dropTarget(f.path)}>
                 <div className="file-thumb folder">
@@ -884,6 +908,19 @@ export function FileLibrary(props: FileLibraryProps) {
               </tr>
             </thead>
             <tbody>
+              {up && (
+                <tr className={upClass.trim() || undefined} onClick={up.onOpen} title="Up one folder" {...upDrop}>
+                  <td>
+                    <span className="sheet-title">
+                      <FolderIcon /> ..
+                    </span>
+                  </td>
+                  <td className="col-type">Folder</td>
+                  <td />
+                  <td />
+                  <td />
+                </tr>
+              )}
               {folders.map((f) => (
                 <tr key={`folder:${f.path}`} className={dropClass(f.path).trim() || undefined} onClick={() => openFolder(f.path)} {...dropTarget(f.path)}>
                   <td>

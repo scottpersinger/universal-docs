@@ -42,6 +42,7 @@ import { useDocFonts } from '../doc/fonts.ts';
 import { useFavicon } from '../favicon.ts';
 import { appName } from '../brand.ts';
 import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
+import { useOpenInTab } from '../components/OpenInTab.tsx';
 
 function downloadFile(name: string, mime: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: mime }));
@@ -368,11 +369,13 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
 
   const blockItem = (type: BlockType, label: string, shortcut?: string): MenuItem => ({ label, shortcut, checked: ctl.currentBlock() === type, action: () => ctl.setBlockType(type) });
 
+  const openInTab = useOpenInTab();
   const menus: { key: string; label: string; items: () => MenuItem[] }[] = [
     {
       key: 'file',
       label: 'File',
       items: () => [
+        ...openInTab.items,
         {
           label: 'New document',
           action: async () => {
@@ -504,6 +507,7 @@ function DocWorkbench({ initialMeta, initialNotKept, ctl, sync }: { initialMeta:
 
   return (
     <div className={`workbench doc-page${printing && ctl.pageSetup().mode === 'pages' ? ' doc-printing-pages' : ''}`}>
+      {openInTab.dialog}
       <header className="wb-header">
         <Link to={lastListingHref()} className="wb-logo" title="Back to the file list" onClick={() => void ctl.saver.flush()}>
           <DocIcon size={32} />

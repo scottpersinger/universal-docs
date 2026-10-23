@@ -1,7 +1,8 @@
-// The desktop app's folder button, left of the open folder's name over the file list: open another folder
-// (the app's Open Folder dialog), or a file or folder by its path.
+// The desktop app's folder button, left of the open folder's name over the file list: open one of the usual
+// folders (home, Documents, Downloads, Desktop), another folder (the app's Open Folder dialog), or a file or folder
+// by its path. The home button beside it, and the open folder's parent, the crumb before its name.
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api.ts';
+import { api, type LocalPlace } from '../api.ts';
 import { PromptModal } from './Modal.tsx';
 
 export function LocalFolderMenu({ onFile, onFolder }: {
@@ -12,7 +13,18 @@ export function LocalFolderMenu({ onFile, onFolder }: {
 }) {
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [places, setPlaces] = useState<LocalPlace[]>([]);
   const ref = useRef<HTMLSpanElement>(null);
+
+  // Asked each time the menu opens: the usual folders can come and go.
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    api.localPlaces().then((r) => live && setPlaces(r.places), () => {});
+    return () => {
+      live = false;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,6 +52,21 @@ export function LocalFolderMenu({ onFile, onFolder }: {
       </button>
       {open && (
         <div className="home-more-menu local-folder-menu" role="menu">
+          {places.map((p) => (
+            <button
+              key={p.path}
+              role="menuitem"
+              title={p.path}
+              onClick={() => {
+                setOpen(false);
+                // One inside the open folder is shown here; for any other the window switches to it.
+                void api.openLocalPath(p.path).then((res) => res.folder !== undefined && onFolder(res.folder));
+              }}
+            >
+              {p.name}
+            </button>
+          ))}
+          {places.length > 0 && <div className="menu-sep" role="separator" />}
           <button
             role="menuitem"
             onClick={() => {
@@ -78,5 +105,50 @@ export function LocalFolderMenu({ onFile, onFolder }: {
         />
       )}
     </span>
+  );
+}
+
+/** Goes to the home folder: shown here when it is the open folder or inside it, else the window moves there. */
+export function LocalFolderHome({ onFolder }: { onFolder(rel: string): void }) {
+  return (
+    <span className="local-folder">
+      <button
+        className="local-folder-btn"
+        aria-label="Home folder"
+        title="Home folder"
+        onClick={() => void api.openLocalPath('~').then((res) => res.folder !== undefined && onFolder(res.folder))}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 11 12 4l8.5 7M5.5 9.5V20h5v-5.5h3V20h5V9.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </span>
+  );
+}
+
+/** The directory a directory is in, or null at the top of the disk. */
+export function parentDir(dir: string): string | null {
+  const trimmed = dir.replace(/[\\/]+$/, '');
+  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  if (i < 0) return null;
+  const parent = trimmed.slice(0, i);
+  // The top of the disk keeps its separator: / or C:\.
+  return !parent || parent.endsWith(':') ? trimmed.slice(0, i + 1) : parent;
+}
+
+/** The open folder's parent, as the crumb before its name: opens it (the window moves there). */
+export function LocalFolderParent({ dir }: { dir: string }) {
+  const parent = parentDir(dir);
+  if (!parent) return null;
+  const name = parent.split(/[\\/]/).filter(Boolean).pop() ?? parent;
+  return (
+    <h2 className="breadcrumbs local-up" aria-label="Folder above">
+      <span>
+        <button className="crumb" title={parent} onClick={() => void api.openLocalPath(parent)}>
+          {name}
+        </button>
+        <span className="crumb-sep">/</span>
+      </span>
+    </h2>
   );
 }

@@ -26,6 +26,7 @@ import { clearMatches, paintMatches, rangesIn } from '../find/highlights.ts';
 import { TextareaMatches } from '../markdown/TextareaMatches.tsx';
 import { appName } from '../brand.ts';
 import { downloadPdf, printingPdf, signalPrintReady } from '../print.ts';
+import { useOpenInTab } from '../components/OpenInTab.tsx';
 
 // Diagrams in the preview: Mermaid is fetched when a document first has one.
 const loadMermaid = () => import('mermaid');
@@ -274,11 +275,13 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
     if (ta) wrapSelection(ta, before, after, placeholder);
   };
 
+  const openInTab = useOpenInTab();
   const menus: { key: string; label: string; items: () => MenuItem[] }[] = [
     {
       key: 'file',
       label: 'File',
       items: () => [
+        ...openInTab.items,
         {
           label: 'New Markdown document',
           action: async () => {
@@ -339,6 +342,7 @@ function MarkdownWorkbench({ initialMeta, ctl, sync }: { initialMeta: SheetMeta;
 
   return (
     <div className="workbench md-page">
+      {openInTab.dialog}
       <header className="wb-header">
         <Link to={lastListingHref()} className="wb-logo" title="Back to the file list" onClick={() => void ctl.saver.flush()}>
           <MarkdownIcon size={32} />

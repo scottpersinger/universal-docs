@@ -125,9 +125,20 @@ type stripping; imports use `.ts` extensions.
   `docs/web-and-pdf.md`). Upload to Web… and Download to Folder… copy files between
   the folder and the web (`server/webCopy.ts`, `/api/web/*`, `WebCopyDialogs.tsx`): the folder's server asks the
   hosted app through `WebBridge`, which `main.js` answers with the Web tab's session (`webRequest`).
-  The folder button left of the open folder's name (`LocalFolderMenu`) offers Open Folder… (`POST /api/local/choose-folder`,
+  Over the file list the breadcrumbs show only the folder and the one above it (`FileLibrary`'s `crumbsShown`; at the
+  open folder's top that is its parent on disk, `LocalFolderParent`), each with its full path as its tooltip, and the list
+  starts with a ".." row (`up`). The house button before them (`LocalFolderHome`) goes to the home folder.
+  The folder button left of it (`LocalFolderMenu`) lists the usual folders in the home folder (`GET /api/local/places`: it, Documents, Downloads, Desktop), and offers Open Folder… (`POST /api/local/choose-folder`,
   `main.js`'s dialog) and Open file by path… (`POST /api/local/open-path`: a file or folder, absolute, `~/` or
   relative to the open folder; one outside it has `main.js` open it, or the file's own folder).
+  Each editor's File menu starts with both (`useOpenInTab`, `client/src/components/OpenInTab.tsx`), which open in a new
+  tab instead (`tab` in the request): one inside the folder by `window.open`, one outside by `main.js` (`openFileInTab`, `openFolder`'s `inTab`).
+  The home page's Scratch pad tile (`ScratchPadTile`) is a menu of the Markdown files in `~/.config/mcp-docs` (`SCRATCH_DIR`,
+  `GET /api/local/scratch-pads`) and New scratchpad, which makes `Scratch pad.md`, then ones named for the day
+  (`scratchPadName`: `Scratch pad-sep05.md`), and opens it (`POST /api/local/scratch-pad`, with a `name` to open one); outside
+  the open folder the window moves to that folder, as Open file by path… does, but keeps the folder it came from
+  (`/open?…&backDir=&backFolder=`, `returnTo` in `client/src/listing.ts`): the editor's breadcrumbs show it, and a list
+  asked for there (breadcrumbs, the logo, Home) moves the window back to it (`HomePage`, `POST /api/local/return`).
   The desktop app is also an MCP server for agents on the same machine (Claude Code, say), named MCP Docs
   (`mcp-docs`; the hosted one is MCP Docs too from version 2, with the id `universal-docs`): `server/localMcp.ts`
   serves the ChatGPT plugin's model tools (`plugin/server`, the newest version, no UI parts) over the open
@@ -190,7 +201,7 @@ type stripping; imports use `.ts` extensions.
   (`client/src/print.ts`), and print it. The headless browser is let in by a print ticket, a cookie making its
   requests the user's for reading only (`PrintTickets`, the `onRequest` hook). A web page's HTML is printed
   from its text with each request it makes checked as an import's (`webFetch.ts`). The hosted app's renderer is
-  Chromium through `playwright-core` (`CHROMIUM_PATH`, Debian's `chromium` on Railway); the desktop app's
+  Chromium through `playwright-core` (`CHROMIUM_PATH`, Debian's `chromium` in the hosted app's image); the desktop app's
   (`ElectronRenderer`) asks `main.js` to print in a hidden window (`printPdf`). `PdfMaker` (made once in `buildApp`)
   also serves `export_pdf`, for the assistant and the MCP, which keeps the PDF as a stored file beside the file.
 - A PDF is signed on its page (Edit, `client/src/pdf/PdfSigner.tsx`): the pages drawn by pdf.js with the user's

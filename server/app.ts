@@ -7,7 +7,7 @@ import { fetchPublicFile, WebFetchError } from './webFetch.ts';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import Anthropic from '@anthropic-ai/sdk';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { ServerResponse } from 'node:http';
@@ -68,6 +68,20 @@ const SESSION_COOKIE = 'sid';
 export const LOCAL_COOKIE = 'local';
 // Ties a Google sign-in callback to the browser that started it (login CSRF).
 const GOOGLE_STATE_COOKIE = 'gstate';
+/** The desktop app's scratch pads: Markdown files in this folder under the home folder. */
+export const SCRATCH_DIR = path.join('.config', 'mcp-docs');
+const SCRATCH_NAME = 'Scratch pad';
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** A new scratch pad's name: "Scratch pad.md", then the day it was made ("Scratch pad-oct05.md", "Scratch pad-oct05-2.md"). */
+export function scratchPadName(taken: (name: string) => boolean, now = new Date()): string {
+  if (!taken(`${SCRATCH_NAME}.md`)) return `${SCRATCH_NAME}.md`;
+  const day = `${SCRATCH_NAME}-${MONTHS[now.getMonth()]}${String(now.getDate()).padStart(2, '0')}`;
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? `${day}.md` : `${day}-${n}.md`;
+    if (!taken(name)) return name;
+  }
+}
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -142,13 +156,13 @@ export interface AppOptions {
      * Show a file that is outside the folder: the desktop app (desktop/main.js) opens the file's own folder
      * in place of this one. Without it only files inside the folder can be opened from Recents.
      */
-    openFile?: (file: string, fromRecents?: boolean) => void;
+    openFile?: (file: string, fromRecents?: boolean, back?: string) => void;
     /** Show a file outside the folder in a new tab on its own folder (the desktop app does it), for the MCP server's open_path. */
     openFileInTab?: (file: string) => void;
-    /** Open another folder in place of this one (the desktop app does it; this server ends). */
-    openFolder?: (dir: string) => void;
-    /** Ask the person for a folder to open, in the desktop app's Open Folder dialog. */
-    chooseFolder?: () => void;
+    /** Open another folder in place of this one (the desktop app does it; this server ends), or in a new tab; at `folder` in it. */
+    openFolder?: (dir: string, inTab?: boolean, folder?: string) => void;
+    /** Ask the person for a folder to open, in the desktop app's Open Folder dialog: in place of this one, or in a new tab. */
+    chooseFolder?: (inTab?: boolean) => void;
     /** The person's account on the web, through the Web tab's session (webCopy.ts): Upload to Web and Download to Folder. */
     web?: Web;
     /** Options for the assistant run on the user's own Claude Code (tests pass a stub query and executable). */
@@ -1570,8 +1584,10 @@ export async function buildApp(opts: AppOptions) {
     // Open a file or a folder the person names by its path: absolute, from the home folder (~/...), or
     // relative to the open folder. One in the open folder is shown here (its path there); for any other the
     // app is asked to open it, or the file's own folder, and this server ends.
+    // With `tab`, one outside the open folder opens in a new tab instead (one inside, the page opens in a new tab).
     r.post('/api/local/open-path', async (req, reply) => {
       const given = (req.body as { path?: unknown } | undefined)?.path;
+      const inTab = (req.body as { tab?: unknown } | undefined)?.tab === true;
       if (!folder || typeof given !== 'string' || !given.trim()) return reply.code(400).send({ error: 'Enter the path of a file or folder.' });
       const typed = given.trim();
       const target = path.resolve(folder.root, typed === '~' || typed.startsWith('~/') ? path.join(homedir(), typed.slice(1)) : typed);
@@ -1588,14 +1604,91 @@ export async function buildApp(opts: AppOptions) {
       if (st.isDirectory()) {
         if (inside) return { folder: rel.split(path.sep).join('/') };
         if (!opts.local?.openFolder) return reply.code(400).send({ error: 'Only folders inside the open folder can be opened here.' });
-        opts.local.openFolder(target);
-        return { switching: true };
+        opts.local.openFolder(target, inTab);
+        return inTab ? { opened: true } : { switching: true };
       }
       if (!st.isFile()) return reply.code(400).send({ error: `${path.basename(target)} is not a file or a folder.` });
-      if (inside) return { file: rel.split(path.sep).join('/') };
+      if (inTab && !inside) {
+        if (!opts.local?.openFileInTab) return reply.code(400).send({ error: 'This file is outside the open folder. Open its folder to see it.' });
+        opts.local.openFileInTab(target);
+        return { opened: true };
+      }
+      return showLocalFile(target, reply);
+    });
+
+    // A file by its absolute path: one in the open folder by its path there; for any other the app is asked to
+    // open the file's own folder, and this server ends.
+    // `back`, a folder of this one: where the file's breadcrumbs lead back to, in place of its own folder.
+    const showLocalFile = (target: string, reply: FastifyReply, back?: string) => {
+      const rel = path.relative(folder!.root, target);
+      const parts = rel.split(path.sep);
+      if (!path.isAbsolute(rel) && !parts.some((p) => p === '..' || p === 'node_modules' || p === '.DS_Store')) return { file: parts.join('/') };
       if (!opts.local?.openFile) return reply.code(400).send({ error: 'This file is outside the open folder. Open its folder to see it.' });
-      opts.local.openFile(target, false);
+      opts.local.openFile(target, false, back === undefined ? undefined : `?${new URLSearchParams({ backDir: folder!.root, backFolder: back })}`);
       return { switching: true };
+    };
+
+    // Scratch pads: the Markdown files in ~/.config/mcp-docs, last changed first, for the home page's Scratch pad menu.
+    r.get('/api/local/scratch-pads', async (_req, reply) => {
+      if (!folder) return reply.code(400).send({ error: 'There is no open folder.' });
+      const dir = path.join(homedir(), SCRATCH_DIR);
+      const names = await readdir(dir).catch(() => [] as string[]);
+      const pads = names
+        .filter((n) => n.toLowerCase().endsWith('.md') && !n.startsWith('.'))
+        .flatMap((name) => {
+          try {
+            const st = statSync(path.join(dir, name));
+            return st.isFile() ? [{ name, modified: st.mtimeMs }] : [];
+          } catch {
+            return [];
+          }
+        })
+        .sort((a, b) => b.modified - a.modified);
+      return { pads: pads.map((p) => ({ name: p.name, modified: new Date(p.modified).toISOString() })) };
+    });
+
+    // Open a scratch pad by its name, or, with none, make a new one (and the folder, the first time). Opened from
+    // another folder, its breadcrumbs lead back to that folder (`folder`, the one of it being shown), not its own.
+    r.post('/api/local/scratch-pad', async (req, reply) => {
+      if (!folder) return reply.code(400).send({ error: 'There is no open folder.' });
+      const dir = path.join(homedir(), SCRATCH_DIR);
+      const name = (req.body as { name?: unknown } | undefined)?.name;
+      const at = (req.body as { folder?: unknown } | undefined)?.folder;
+      const back = typeof at === 'string' ? at : '';
+      if (name !== undefined) {
+        if (typeof name !== 'string' || !name.toLowerCase().endsWith('.md') || name !== path.basename(name)) return reply.code(400).send({ error: 'That is not a scratch pad.' });
+        if (!existsSync(path.join(dir, name))) return reply.code(404).send({ error: `${name} is no longer there.` });
+        return showLocalFile(path.join(dir, name), reply, back);
+      }
+      await mkdir(dir, { recursive: true });
+      for (;;) {
+        const file = path.join(dir, scratchPadName((n) => existsSync(path.join(dir, n))));
+        // 'wx' never writes over one made meanwhile; the next name is tried instead.
+        const made = await writeFile(file, '', { flag: 'wx' }).then(
+          () => true,
+          (e: NodeJS.ErrnoException) => {
+            if (e.code === 'EEXIST') return false;
+            throw e;
+          },
+        );
+        if (made) return showLocalFile(file, reply, back);
+      }
+    });
+
+    // The folders the folder menu offers: the usual places in the home folder (HOME, Documents, Downloads,
+    // Desktop) that are there.
+    r.get('/api/local/places', async (_req, reply) => {
+      if (!folder) return reply.code(400).send({ error: 'There is no open folder.' });
+      const home = homedir();
+      const isDir = (d: string) => {
+        try {
+          return statSync(d).isDirectory();
+        } catch {
+          return false;
+        }
+      };
+      const usual = [home, ...['Documents', 'Downloads', 'Desktop'].map((n) => path.join(home, n))].filter((d) => d !== folder.root && isDir(d));
+      return { places: usual.map((d) => ({ name: d === home ? 'HOME' : path.basename(d), path: d })) };
     });
 
     // Show the desktop app's Connect an Agent dialog.
@@ -1605,10 +1698,21 @@ export async function buildApp(opts: AppOptions) {
       return { ok: true };
     });
 
-    // Show the desktop app's Open Folder dialog.
-    r.post('/api/local/choose-folder', async (_req, reply) => {
+    // Go back to the folder a scratch pad was opened from (its breadcrumbs, the logo, Home): the window switches to
+    // `dir` again, showing the folder `at` in it (not named `folder`, which requests name in this one).
+    r.post('/api/local/return', async (req, reply) => {
+      const { dir, at } = (req.body ?? {}) as { dir?: unknown; at?: unknown };
+      if (typeof dir !== 'string' || !path.isAbsolute(dir) || (at !== undefined && typeof at !== 'string')) return reply.code(400).send({ error: 'Give the folder to go back to.' });
+      if (!existsSync(dir)) return reply.code(404).send({ error: `${dir} is no longer there.` });
+      if (!opts.local?.openFolder) return reply.code(400).send({ error: 'Folders cannot be opened here.' });
+      opts.local.openFolder(dir, false, at || undefined);
+      return { switching: true };
+    });
+
+    // Show the desktop app's Open Folder dialog; with `tab`, the folder chosen opens in a new tab.
+    r.post('/api/local/choose-folder', async (req, reply) => {
       if (!opts.local?.chooseFolder) return reply.code(400).send({ error: 'Folders cannot be opened here.' });
-      opts.local.chooseFolder();
+      opts.local.chooseFolder((req.body as { tab?: unknown } | undefined)?.tab === true);
       return { ok: true };
     });
 

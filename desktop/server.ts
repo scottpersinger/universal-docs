@@ -35,10 +35,10 @@ const app = await buildApp({
     dir,
     token: process.env.LOCAL_TOKEN || undefined,
     cookie: process.env.LOCAL_COOKIE || undefined,
-    openFile: (file, fromRecents = true) => process.send?.({ openFile: file, fromRecents }),
+    openFile: (file, fromRecents = true, back) => process.send?.({ openFile: file, fromRecents, back }),
     openFileInTab: (file) => process.send?.({ openFileInTab: file }),
-    openFolder: (dir) => process.send?.({ openFolder: dir }),
-    chooseFolder: () => process.send?.({ chooseFolder: true }),
+    openFolder: (dir, inTab = false, folder) => process.send?.({ openFolder: dir, inTab, folder }),
+    chooseFolder: (inTab = false) => process.send?.({ chooseFolder: true, inTab }),
     connectAgent: () => process.send?.({ connectAgent: true }),
     web,
     // The MCP server for agents on this machine (MCP_TOKEN; MCP_URL is main.js's fixed port in front of it).

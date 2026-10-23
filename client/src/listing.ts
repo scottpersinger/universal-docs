@@ -27,6 +27,37 @@ export const rememberRecents = (): void => rememberListing(`?${RECENTS_PARAM}=1`
 /** Whether the file being shown was opened from Recents: its breadcrumbs then start there. */
 export const fromRecents = (): boolean => new URLSearchParams(last()).get(RECENTS_PARAM) === '1';
 
+/**
+ * The desktop app: the folder a file was opened from when the window moved to the file's own folder to show it
+ * (a scratch pad, in ~/.config/mcp-docs). Its breadcrumbs show that folder, and the way back to a list moves
+ * the window back there (HomePage).
+ */
+export interface ReturnTo {
+  /** The folder's absolute path. */
+  dir: string;
+  /** The folder in it that was shown ('' for the top). */
+  folder: string;
+}
+const RETURN_KEY = 'ui.returnTo';
+
+export function rememberReturn(to: ReturnTo | null): void {
+  try {
+    if (to) sessionStorage.setItem(RETURN_KEY, JSON.stringify(to));
+    else sessionStorage.removeItem(RETURN_KEY);
+  } catch {
+    // Not remembered: the file's own folder it is.
+  }
+}
+
+export function returnTo(): ReturnTo | null {
+  try {
+    const to = JSON.parse(sessionStorage.getItem(RETURN_KEY) ?? 'null') as ReturnTo | null;
+    return to && typeof to.dir === 'string' && typeof to.folder === 'string' ? to : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The list as it was last shown. */
 export const lastListingHref = (): string => `/${last()}`;
 
