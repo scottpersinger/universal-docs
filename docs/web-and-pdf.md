@@ -66,8 +66,8 @@ interface PdfRenderer {
 - **Hosted and `npm run dev`**: `playwright-core` driving Chromium. One browser is started on the first
   request and kept; each render is a new context (no shared cookies or storage) and is closed after. At most
   two renders run at once, the rest wait; a render has a deadline (30 s, 60 s for a presentation). The browser
-  is found by `CHROMIUM_PATH`, else a Playwright-installed Chromium, else Chrome on the machine. On Railway
-  the image gets Debian's `chromium` (`RAILPACK_DEPLOY_APT_PACKAGES`) and `CHROMIUM_PATH` points at it.
+  is found by `CHROMIUM_PATH`, else a Playwright-installed Chromium, else Chrome on the machine. The hosted
+  app's image (`deploy/aws/Dockerfile`) has Debian's `chromium` and `CHROMIUM_PATH` points at it.
 - **The desktop app**: the server is a child of Electron, which already is a browser: the server
   (`ElectronRenderer`) asks `main.js` (a message to its parent, as `openFile` does) to load the page in a
   hidden window with a session of its own and `printToPDF` it (`printPdf`). No Chromium is shipped. Without a
@@ -216,7 +216,7 @@ only.
 ## Phases
 
 1. `PdfRenderer` (Playwright; Electron in the desktop app), print views, print tickets, the `/pdf` routes,
-   Download as PDF in the four places. Railway: Chromium in the image.
+   Download as PDF in the four places. Chromium in the hosted app's image.
 2. `export_pdf` for the assistant and the MCP.
 3. Web tabs, the Local | Web switch, sign-in (with the `mcpdocs://` hand-back for Google), Sign out of Web, devices.
 4. Upload to Web…, Download to Folder…, Download to MCP Docs from the browser.

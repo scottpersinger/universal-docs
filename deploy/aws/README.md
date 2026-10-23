@@ -27,4 +27,4 @@ A changed parameter takes effect on the next deploy, or at once with `/opt/mcpdo
 instance.
 
 App-change jobs (the assistant changing the app) need `GITHUB_TOKEN`; they merge into the same repository's
-main, which also deploys the Railway copy.
+main, which deploys again.

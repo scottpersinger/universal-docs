@@ -3,7 +3,7 @@
 //     address on a domain verified for sending in that account);
 //   - Resend, when RESEND_API_KEY is set;
 //   - otherwise the message is written to the server log, which is enough for a single-operator deployment:
-//     the password reset link can be copied from the Railway logs.
+//     the password reset link can be copied from the server's log.
 export interface Mail {
   to: string;
   subject: string;

@@ -21,7 +21,7 @@ const app = await buildApp({
   plugin: process.env.PLUGIN_ENABLED === '1' && pluginUrl ? { publicUrl: pluginUrl, webDir: path.join(root, 'plugin', 'dist', 'web') } : undefined,
 });
 
-// In production (e.g. Railway) listen on all interfaces; locally stay on loopback.
+// In production (in a container) listen on all interfaces; locally stay on loopback.
 await app.listen({ port, host: process.env.HOST ?? (production ? '0.0.0.0' : '127.0.0.1') });
 
 // Close cleanly on redeploy/shutdown so in-flight saves finish and SQLite is checkpointed.

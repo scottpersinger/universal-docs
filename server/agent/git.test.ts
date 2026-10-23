@@ -142,7 +142,6 @@ describe('git for app-change jobs', () => {
     expect(githubConfig({})).toBeNull();
     expect(githubConfig({ GITHUB_TOKEN: 't' })).toBeNull();
     expect(githubConfig({ GITHUB_TOKEN: 't', GITHUB_REPO: 'a/b' })).toEqual({ token: 't', repo: 'a/b' });
-    expect(githubConfig({ GITHUB_TOKEN: 't', RAILWAY_GIT_REPO_OWNER: 'o', RAILWAY_GIT_REPO_NAME: 'r' })).toEqual({ token: 't', repo: 'o/r' });
   });
 
   it('opens and merges pull requests through the GitHub API', async () => {

@@ -140,7 +140,7 @@ standalone server refuses to start with it set when `NODE_ENV=production`, and t
 `/oauth/*`, `/plugin/*` and the OAuth well-known documents (`plugin/server/mount.ts`, a hook ahead of the app's
 routes), sharing the app's database, stores, accounts and Google sign-in. The OAuth issuer and image origin is
 `PLUGIN_PUBLIC_URL`, defaulting to `APP_URL`. `npm run build` builds the plugin app into `plugin/dist/web` along
-with the client, so on Railway it is one service and one volume. A browser already signed in to the app skips
+with the client, so the hosted app is one server and one volume. A browser already signed in to the app skips
 the plugin's sign-in page and goes straight to consent. For Google sign-in on the plugin, add
 `<PLUGIN_PUBLIC_URL>/oauth/google/callback` to the Google OAuth client. The standalone server
 (`plugin/server/index.ts`) remains for development and the harness.

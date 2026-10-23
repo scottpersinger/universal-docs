@@ -382,7 +382,7 @@ export function createPluginHandler(opts: PluginServerOptions): PluginHandler {
   return { handles: (pathname) => PLUGIN_PATH.test(pathname), handle };
 }
 
-/** The address a request came from: the proxy's view of the client when behind one (Railway), else the socket's. */
+/** The address a request came from: the proxy's view of the client when behind one (Caddy on AWS), else the socket's. */
 function clientAddress(req: http.IncomingMessage): string {
   const real = req.headers['x-real-ip'];
   const forwarded = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();

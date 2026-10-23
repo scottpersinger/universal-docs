@@ -1,4 +1,4 @@
-// Runs the plugin inside the app's own Fastify server, so one Railway service with one volume serves both.
+// Runs the plugin inside the app's own Fastify server, so one server with one volume serves both.
 // The plugin owns a few paths (/mcp, /oauth/*, /plugin/*, the OAuth well-known documents); a hook at the
 // start of the request answers those with the plugin's handler and leaves everything else to the app.
 import type { FastifyInstance } from 'fastify';

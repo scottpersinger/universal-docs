@@ -88,7 +88,7 @@ try {
   // 1. A git checkout to work in. In production the container has the deployed files but no .git.
   if (github) {
     const hub = new GitHub(github);
-    await git.ensureRepo(hub.remoteUrl, process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA);
+    await git.ensureRepo(hub.remoteUrl, process.env.GIT_COMMIT_SHA);
     if (await git.syncMain({ url: hub.remoteUrl, token: github.token })) log('Source tree matches the latest main.');
   } else if (!git.hasRepo()) {
     throw new Error('The source tree is not a git repository and GITHUB_TOKEN is not set, so changes could not be recorded.');

@@ -16,10 +16,10 @@ export interface GitHubConfig {
   remoteUrl?: string;
 }
 
-/** Where to publish, from the environment: GITHUB_TOKEN plus GITHUB_REPO or Railway's RAILWAY_GIT_* variables. */
+/** Where to publish, from the environment: GITHUB_TOKEN plus GITHUB_REPO. */
 export function githubConfig(env: NodeJS.ProcessEnv = process.env): GitHubConfig | null {
   const token = env.GITHUB_TOKEN;
-  const repo = env.GITHUB_REPO ?? (env.RAILWAY_GIT_REPO_OWNER && env.RAILWAY_GIT_REPO_NAME ? `${env.RAILWAY_GIT_REPO_OWNER}/${env.RAILWAY_GIT_REPO_NAME}` : undefined);
+  const repo = env.GITHUB_REPO;
   if (!token || !repo) return null;
   return { repo, token, ...(env.GITHUB_API_URL ? { apiUrl: env.GITHUB_API_URL } : {}), ...(env.GITHUB_REMOTE_URL ? { remoteUrl: env.GITHUB_REMOTE_URL } : {}) };
 }

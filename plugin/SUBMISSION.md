@@ -22,7 +22,7 @@ tools wait for approval, and the server must keep working with the approved tool
 - [x] Logo (square SVG)
 - [x] One skill, with front matter that parses as YAML
 - [x] Remote MCP server on a public HTTPS domain, with OAuth (metadata document or dynamic registration)
-- [x] Domain verification route: set `OPENAI_APPS_CHALLENGE` on Railway to the token the portal gives, and
+- [x] Domain verification route: set `OPENAI_APPS_CHALLENGE` on the hosted app to the token the portal gives, and
       `https://docs.freeflow.im/.well-known/openai-apps-challenge` answers with it as plain text
 - [x] Every tool has `readOnlyHint`, `destructiveHint` and `openWorldHint`; the tools that fetch from the web
       (`import_file`, `insert_image`, `set_cell_image`) say so

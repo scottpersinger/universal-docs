@@ -31,7 +31,7 @@ const PRIVACY = `
 
 <h2>Who else receives data</h2>
 <ul>
-  <li><strong>Hosting and storage:</strong> Railway (servers and file storage) and Cloudflare (backups of files, and account email).</li>
+  <li><strong>Hosting and storage:</strong> Amazon Web Services (servers and file storage) and Cloudflare (backups of files, and account email).</li>
   <li><strong>AI providers, when you use an assistant:</strong> Anthropic, or OpenAI if you choose an OpenAI model or ask for an AI image edit, receive your messages and the parts of your files needed to answer. OpenAI receives what the ChatGPT plugin returns, as described above.</li>
   <li><strong>Web search:</strong> when the built-in assistant searches the web, the search words go to Brave Search.</li>
   <li><strong>Google:</strong> if you sign in with Google, and for the fonts the editors load.</li>

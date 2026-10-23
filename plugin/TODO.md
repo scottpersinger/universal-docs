@@ -43,7 +43,7 @@ user types.
 
 ## 5. Production-only path
 
-- [ ] Deploy only the in-app mount (`PLUGIN_ENABLED=1` on Railway); the tunnel and standalone server stay for local testing
+- [ ] Deploy only the in-app mount (`PLUGIN_ENABLED=1` on the hosted app); the tunnel and standalone server stay for local testing
 - [x] Refuse to start in production when `PLUGIN_USER_EMAIL` is set (it disables auth for every request)
 - [x] Replace the placeholder URL in `mcp.json`
 
@@ -88,8 +88,8 @@ The submission itself (the package, what is ready, what is not, and the review's
 
 ## 11. Storage, backups and export
 
-Today every document, presentation and spreadsheet is one JSON file in `sheets/` on the single Railway
-volume (`universal-docs-data`, 5 GB, one replica), with metadata in `app.db` and images in `images/`. That is
+Today every document, presentation and spreadsheet is one JSON file in `sheets/` on the single
+data volume, with metadata in `app.db` and images in `images/`. That is
 the only copy. Use **Cloudflare R2** (S3-compatible; same Cloudflare account as email) to keep a second one.
 
 Write-through first, R2 as primary later:

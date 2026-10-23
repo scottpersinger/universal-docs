@@ -1,4 +1,4 @@
-# Deploys the hosted app to AWS (deploy/aws/template.yaml) on each push to main, as Railway does for its copy:
+# Deploys the hosted app to AWS (deploy/aws/template.yaml) on each push to main:
 # builds the image on an Arm runner (the instance is Graviton), pushes it to ECR and runs deploy.sh on the
 # instance through Systems Manager. Does nothing until the repository variables AWS_DEPLOY_ROLE_ARN,
 # AWS_INSTANCE_ID and AWS_ECR_REPOSITORY are set (the stack's outputs).
