@@ -78,7 +78,7 @@ const frontServer = () => serverOf(BrowserWindow.getFocusedWindow()) ?? serverOf
 // A Web tab is the hosted app (UNIVERSAL_WEB_URL), with a session of its own kept on disk, so web cookies and
 // the folders' tokens never mix and the person stays signed in. The page gets nothing of the app's: it talks
 // to the app only through mcpdocs:// links (the Local | Web switch), which the app catches before they load.
-const WEB_URL = (process.env.UNIVERSAL_WEB_URL || 'https://docs.freeflow.im').replace(/\/$/, '');
+const WEB_URL = (process.env.UNIVERSAL_WEB_URL || 'https://mcpdocs.freeflow.im').replace(/\/$/, '');
 const WEB_ORIGIN = new URL(WEB_URL).origin;
 /** Added to the pages' user agent, so the client knows it is in the app and shows the Local | Web switch (PlaceSwitch). */
 const UA_MARK = 'MCPDocs/1';

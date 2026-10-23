@@ -139,7 +139,7 @@ that tries to reach this machine prints without reaching it.
   follow the last Local tab used, and closing the last Local tab of a folder still stops its server.
 - Without native tabs (Windows, Linux) Web is a window of its own, until the app has a tab strip of its own.
 
-As built: `UNIVERSAL_WEB_URL` (default `https://docs.freeflow.im`) is the hosted app. Both sessions add
+As built: `UNIVERSAL_WEB_URL` (default `https://mcpdocs.freeflow.im`) is the hosted app. Both sessions add
 `MCPDocs/1` to the user agent, which is how the client knows to show the switch (`PlaceSwitch`); a page in
 a Local tab knows it is local from `/api/auth/me`. The switch's other side is an `mcpdocs://switch?to=web|local`
 link that `main.js` catches in `will-navigate` (`switchTo`), so the hosted page is given no IPC. A tab of the

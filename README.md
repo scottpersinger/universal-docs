@@ -240,7 +240,7 @@ How the comparison works (`shared/diff.ts`):
 
 ## Your web files
 
-Beside the folders on your computer, the app shows your MCP Docs account on the web (docs.freeflow.im) in a **Web tab**, in the same window. The **Local | Web** switch beside the logo goes from one to the other (**File → Open Web Tab** too), and each tab's title ends in "— Local" or "— Web". The two are separate libraries: nothing syncs, and a copy is a new file.
+Beside the folders on your computer, the app shows your MCP Docs account on the web (mcpdocs.freeflow.im) in a **Web tab**, in the same window. The **Local | Web** switch beside the logo goes from one to the other (**File → Open Web Tab** too), and each tab's title ends in "— Local" or "— Web". The two are separate libraries: nothing syncs, and a copy is a new file.
 
 - **Signing in:** only when you first open a Web tab. Email and password sign in inside the tab; **Continue with Google** finishes in your browser, and the tab signs itself in a moment later. **File → Sign Out of Web** signs out.
 - **Upload to Web…** (a file's ⋮ menu in a folder) copies it into one of your web folders, pictures and all.
