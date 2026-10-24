@@ -30,7 +30,11 @@ export interface MountOptions {
   /** The app's mailer and its limit on emails per address, for accounts created on the plugin's sign-in page. */
   sendMail: Mailer;
   mailAllowed: (email: string) => boolean;
-  /** Public origin of the app (the OAuth issuer and where images come from), e.g. https://docs.example.com. */
+  /**
+   * Public origin of the app (the OAuth issuer and where images come from), e.g. https://docs.example.com. Several,
+   * comma-separated, when the app is reached on more than one host: each is the issuer and resource of requests to
+   * its host (a client checks both against the address it was given), the first for any other host and for images.
+   */
   publicUrl: string;
   /** Directory with the built plugin app (plugin/dist/web). */
   webDir: string;
@@ -41,31 +45,39 @@ export interface MountOptions {
 
 /** Returns the OAuth server, for the app's Settings page (the agents connected with a device code). */
 export async function mountPlugin(app: FastifyInstance, opts: MountOptions): Promise<OAuthServer> {
-  const publicUrl = opts.publicUrl.replace(/\/$/, '');
+  const urls = opts.publicUrl.split(',').map((u) => u.trim().replace(/\/$/, '')).filter(Boolean);
+  const publicUrl = urls[0];
   const hub = new FileHub({ db: opts.db, dataDir: opts.dataDir, publicUrl, sheets: opts.sheets, images: opts.images, files: opts.files, pdf: opts.pdf });
-  const oauth = new OAuthServer({
-    db: new DatabaseSync(path.join(opts.dataDir, 'plugin.db')),
-    issuer: publicUrl,
-    resource: `${publicUrl}/mcp`,
-    auth: opts.auth,
-    profile: (id) => hub.profile(id),
-    google: opts.google,
-    sendMail: opts.sendMail,
-    mailAllowed: opts.mailAllowed,
-  });
-  const handler = createPluginHandler({
-    hub,
-    oauth,
-    publicUrl,
-    webDir: opts.webDir,
-    production: opts.production,
-    sessionUser: (req) => {
-      const cookie = parseCookie(req.headers.cookie)[opts.sessionCookie];
-      return opts.auth.userForSession(cookie)?.id ?? null;
-    },
+  // One OAuth server per host, over the same database: a sign-in on either host gives tokens both accept.
+  const db = new DatabaseSync(path.join(opts.dataDir, 'plugin.db'));
+  const hosts = urls.map((url) => {
+    const oauth = new OAuthServer({
+      db,
+      issuer: url,
+      resource: `${url}/mcp`,
+      auth: opts.auth,
+      profile: (id) => hub.profile(id),
+      google: opts.google,
+      sendMail: opts.sendMail,
+      mailAllowed: opts.mailAllowed,
+    });
+    const handler = createPluginHandler({
+      hub,
+      oauth,
+      publicUrl: url,
+      webDir: opts.webDir,
+      production: opts.production,
+      sessionUser: (req) => {
+        const cookie = parseCookie(req.headers.cookie)[opts.sessionCookie];
+        return opts.auth.userForSession(cookie)?.id ?? null;
+      },
+    });
+    return { host: new URL(url).host, oauth, handler };
   });
   app.addHook('onRequest', (req, reply, done) => {
     const pathname = (req.raw.url ?? '/').split('?')[0];
+    const host = req.headers.host?.toLowerCase();
+    const { handler } = hosts.find((h) => h.host === host) ?? hosts[0];
     if (!handler.handles(pathname)) return done();
     reply.hijack();
     handler.handle(req.raw, reply.raw).catch((e: unknown) => {
@@ -73,8 +85,8 @@ export async function mountPlugin(app: FastifyInstance, opts: MountOptions): Pro
       if (!reply.raw.headersSent) reply.raw.writeHead(500).end();
     });
   });
-  app.log.info(`ChatGPT plugin mounted at ${publicUrl}/mcp (OAuth issuer ${publicUrl})`);
-  return oauth;
+  app.log.info(`ChatGPT plugin mounted at ${urls.map((u) => `${u}/mcp`).join(', ')} (each its own OAuth issuer)`);
+  return hosts[0].oauth;
 }
 
 function parseCookie(header: string | undefined): Record<string, string> {

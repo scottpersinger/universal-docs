@@ -11,8 +11,8 @@ const production = process.env.NODE_ENV === 'production';
 mkdirSync(dataDir, { recursive: true });
 
 // The ChatGPT plugin is served from this server when PLUGIN_ENABLED=1 (its OAuth issuer and image origin is
-// PLUGIN_PUBLIC_URL, defaulting to APP_URL); `npm run build` builds its app into plugin/dist/web.
-const pluginUrl = (process.env.PLUGIN_PUBLIC_URL || process.env.APP_URL)?.replace(/\/$/, '');
+// PLUGIN_PUBLIC_URL, defaulting to APP_URL; several, comma-separated, for a server reached on more than one host); `npm run build` builds its app into plugin/dist/web.
+const pluginUrl = process.env.PLUGIN_PUBLIC_URL || process.env.APP_URL;
 const app = await buildApp({
   dataDir,
   staticDir: production ? path.join(root, 'dist', 'client') : undefined,

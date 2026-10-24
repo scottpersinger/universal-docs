@@ -168,3 +168,25 @@ describe('plugin mounted in the app', () => {
     expect(refresh.json().error).toBe('invalid_grant');
   });
 });
+
+describe('plugin reached on more than one host', () => {
+  it('is its own issuer and resource on each host, and the first on any other', async () => {
+    const two = mkdtempSync(path.join(tmpdir(), 'sheetsweb-plugin-hosts-'));
+    const hosted = await buildApp({ dataDir: two, sendMail: box.send, appUrl: 'https://mcp.test', plugin: { publicUrl: 'https://docs.test, https://mcp.test/', webDir: two } });
+    try {
+      const on = (host?: string) => (host ? { host } : {});
+      for (const [host, origin] of [['mcp.test', 'https://mcp.test'], ['docs.test', 'https://docs.test'], [undefined, 'https://docs.test']] as const) {
+        const prm = await hosted.inject({ method: 'GET', url: '/.well-known/oauth-protected-resource/mcp', headers: on(host) });
+        expect(prm.json()).toMatchObject({ resource: `${origin}/mcp`, authorization_servers: [origin] });
+        const as = await hosted.inject({ method: 'GET', url: '/.well-known/oauth-authorization-server', headers: on(host) });
+        expect(as.json()).toMatchObject({ issuer: origin, token_endpoint: `${origin}/oauth/token` });
+        const mcp = await hosted.inject({ method: 'POST', url: '/mcp', headers: { ...on(host), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' } });
+        expect(mcp.statusCode).toBe(401);
+        expect(mcp.headers['www-authenticate']).toContain(`resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`);
+      }
+    } finally {
+      await hosted.close();
+      rmSync(two, { recursive: true, force: true });
+    }
+  });
+});
