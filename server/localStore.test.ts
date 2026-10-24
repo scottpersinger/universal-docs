@@ -233,6 +233,43 @@ describe('a mounted folder', () => {
     expect((await library('reports')).docs.length).toBeGreaterThan(0);
   });
 
+  it('asks an index (Spotlight) before walking the folder, and walks when it has no answer', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sheetsweb-folder-'));
+    const data = mkdtempSync(path.join(tmpdir(), 'sheetsweb-localdata-'));
+    const inDir = (...parts: string[]) => path.join(dir, ...parts);
+    mkdirSync(inDir('a', 'Budget stuff'), { recursive: true });
+    mkdirSync(inDir('node_modules'));
+    mkdirSync(inDir('.git'));
+    for (const f of [['a', 'Budget stuff', 'budget 2026.md'], ['budget.pdf'], ['node_modules', 'budget.md'], ['.git', 'budget'], ['unindexed budget.md']]) writeFileSync(inDir(...f), 'x');
+    const asked: string[] = [];
+    let answer: (root: string) => string[] | null = (root) => [
+      ...['a/Budget stuff/budget 2026.md', 'a/Budget stuff', 'budget.pdf', 'node_modules/budget.md', '.git/budget', 'gone budget.md', 'notes.md'].map((p) => path.join(root, p)),
+      path.join(path.dirname(root), 'outside budget.md'),
+    ];
+    const indexed = await buildApp({ dataDir: data, local: { dir, recents: null, findByName: async (root, text) => (asked.push(text), answer(root)) } });
+    const search = async (q: string) => (await indexed.inject({ method: 'GET', url: `/api/library/search?q=${q}` })).json() as Library & { truncated: boolean };
+    try {
+      // What the index found, held to what a walk would: matching names only, none under skipped or outside folders, nearest first.
+      const found = await search('BUDGET');
+      expect(asked).toEqual(['BUDGET']);
+      expect(found.docs.map((d) => [d.title, d.folder])).toEqual([['budget 2026.md', 'a/Budget stuff']]);
+      expect(found.files.map((f) => f.filename)).toEqual(['budget.pdf']);
+      expect(found.folders).toEqual([{ name: 'Budget stuff', path: 'a/Budget stuff' }]);
+      expect(found.truncated).toBe(false);
+      // A folder the index does not cover, or an index that fails, is walked.
+      answer = () => null;
+      expect((await search('unindexed')).docs.map((d) => d.title)).toEqual(['unindexed budget.md']);
+      answer = () => {
+        throw new Error('mdfind failed');
+      };
+      expect((await search('2026')).docs.map((d) => d.title)).toEqual(['budget 2026.md']);
+    } finally {
+      await indexed.close();
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(data, { recursive: true, force: true });
+    }
+  });
+
   it('notices files added and removed outside the app', async () => {
     writeFileSync(at('fresh.md'), 'new');
     rmSync(at('-..-escape.md'));

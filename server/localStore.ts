@@ -6,8 +6,9 @@
 // converted, the rest only listed), and its directories are the library's folders. SQLite still
 // holds the metadata (ids, branch links), brought in line with a directory each time it is listed, so
 // everything built on SheetStore and FileStore works as is.
-import { existsSync, mkdirSync, openSync, readdirSync, readSync, closeSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs';
-import { copyFile, mkdir, readdir, rename, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, openSync, readdirSync, readSync, closeSync, realpathSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, rename, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { newCsvDoc, type CsvDoc } from '../shared/csv.ts';
@@ -94,15 +95,72 @@ interface Found {
   birthtime: string;
 }
 
+/**
+ * Looks up files and folders by name under a directory in an index instead of walking it: the absolute paths
+ * whose name contains the text, or null when the index does not cover the directory.
+ */
+export type FindByName = (root: string, text: string) => Promise<string[] | null>;
+
+const mdfind = (args: string[]): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile('/usr/bin/mdfind', args, { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+
+/** The directories Spotlight was lately seen to cover, and when. */
+const indexed = new Map<string, number>();
+const INDEXED_FOR_MS = 10 * 60_000;
+
+/**
+ * Whether Spotlight covers a directory: it finds the oldest of the directory's own entries by name (a new one
+ * may not be indexed yet). A volume or folder it leaves out (indexing off, Privacy) finds nothing.
+ */
+async function spotlightCovers(root: string): Promise<boolean> {
+  if (Date.now() - (indexed.get(root) ?? -Infinity) < INDEXED_FOR_MS) return true;
+  let oldest: { name: string; at: number } | null = null;
+  try {
+    for (const name of readdirSync(root).slice(0, 100)) {
+      if (name.startsWith('.')) continue; // Spotlight leaves hidden files out.
+      const at = statSync(path.join(root, name)).mtimeMs;
+      if (!oldest || at < oldest.at) oldest = { name, at };
+    }
+  } catch {
+    return false;
+  }
+  if (!oldest) return false;
+  const found = await mdfind(['-onlyin', root, `kMDItemFSName == "${spotlightText(oldest.name)}"`]).catch(() => '');
+  const covered = found.split('\n').some((p) => path.dirname(p) === root);
+  if (covered) indexed.set(root, Date.now());
+  return covered;
+}
+
+/** Text inside a Spotlight query's quotes, its wildcards and quotes taken literally. */
+const spotlightText = (text: string) => text.replace(/[\\"*?]/g, '\\$&');
+
+/** Spotlight's index (macOS): far quicker than walking a large tree, though it leaves hidden files out. */
+export const spotlightFind: FindByName = async (dir, text) => {
+  const root = realpathSync(dir); // Spotlight answers with real paths (/private/var/..., not /var/...).
+  const [covered, found] = await Promise.all([spotlightCovers(root), mdfind(['-onlyin', root, `kMDItemFSName == "*${spotlightText(text)}*"c`])]);
+  if (!covered) return null;
+  return found
+    .split('\n')
+    .filter(Boolean)
+    .map((p) => path.join(dir, path.relative(root, p)));
+};
+
 /** The mounted folder: finds its files, picks names for new ones, and keeps deleted ones recoverable. */
 export class LocalFolder {
   readonly root: string;
   private trashDir: string;
+  private index: FindByName | null;
 
-  /** `trashDir` is where deleted files are moved (outside the folder), so a delete can be taken back by hand. */
-  constructor(root: string, trashDir: string) {
+  /**
+   * `trashDir` is where deleted files are moved (outside the folder), so a delete can be taken back by hand.
+   * `index` is asked by a search before it walks the tree (Spotlight on macOS).
+   */
+  constructor(root: string, trashDir: string, index: FindByName | null = null) {
     this.root = path.resolve(root);
     this.trashDir = trashDir;
+    this.index = index;
   }
 
   /**
@@ -170,16 +228,52 @@ export class LocalFolder {
    * Listed files and folders, anywhere under the mounted folder, whose name contains the text. The tree is
    * walked level by level, so what is near the top is found first, and without holding up other requests;
    * `truncated` says the walk stopped early (enough results, or out of time on a very large tree). One
-   * search asks for documents, files and folders in turn, so a walk is shared for a moment.
+   * search asks for documents, files and folders in turn, so a walk is shared for a moment. An index
+   * (`index`) that covers the folder answers instead, in a moment however large the tree.
    */
   find(text: string): Promise<{ files: Found[]; dirs: string[]; truncated: boolean }> {
     // Shared while it runs and for a moment after it finishes.
     if (this.lastFind && this.lastFind.text === text && Date.now() - this.lastFind.at < 2000) return this.lastFind.result;
-    const result = this.walkFor(text.toLowerCase());
+    const q = text.toLowerCase();
+    const result = this.lookUp(text, q).then((r) => r ?? this.walkFor(q));
     const entry = { text, at: Infinity, result };
     this.lastFind = entry;
     void result.finally(() => (entry.at = Date.now()));
     return result;
+  }
+
+  /**
+   * The index's answer, held to what the walk would find: names containing the text whatever their case,
+   * nearest the top first, nothing in or under a folder the walk skips; null when there is no index for the folder.
+   */
+  private async lookUp(text: string, q: string): Promise<{ files: Found[]; dirs: string[]; truncated: boolean } | null> {
+    let paths: string[] | null;
+    try {
+      paths = this.index && (await this.index(this.root, text));
+    } catch {
+      paths = null; // Not answering, or too slow: walk instead.
+    }
+    if (!paths) return null;
+    const rels = paths
+      .map((p) => path.relative(this.root, p).split(path.sep))
+      .filter((parts) => parts[0] && parts[0] !== '..' && !path.isAbsolute(parts[0]))
+      .filter((parts) => parts.at(-1)!.toLowerCase().includes(q) && !SYSTEM_FILES.has(parts.at(-1)!))
+      .filter((parts) => !parts.some((p, i) => SKIP_DIRS.has(p) || this.skipInWalk(parts.slice(0, i + 1).join('/'))))
+      .map((parts) => ({ rel: parts.join('/'), depth: parts.length }))
+      .sort((a, b) => a.depth - b.depth || byName(a.rel, b.rel));
+    const files: Found[] = [];
+    const dirs: string[] = [];
+    for (const { rel } of rels) {
+      if (files.length >= SEARCH_LIMIT || dirs.length >= SEARCH_LIMIT) return { files, dirs, truncated: true };
+      try {
+        const st = await lstat(this.abs(rel));
+        if (st.isDirectory()) dirs.push(rel);
+        else if (st.isFile()) files.push({ rel, ext: extOf(rel), size: st.size, mtime: iso(st.mtimeMs), birthtime: iso(st.birthtimeMs || st.mtimeMs) });
+      } catch {
+        // Gone since it was indexed.
+      }
+    }
+    return { files, dirs, truncated: false };
   }
 
   private async walkFor(q: string): Promise<{ files: Found[]; dirs: string[]; truncated: boolean }> {

@@ -6,6 +6,7 @@ import '../server/env.ts';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { buildApp } from '../server/app.ts';
+import { spotlightFind } from '../server/localStore.ts';
 import { ElectronRenderer, type PdfAnswer } from '../server/pdf.ts';
 import { WebBridge, type WebAnswer } from '../server/webCopy.ts';
 
@@ -40,6 +41,8 @@ const app = await buildApp({
     openFolder: (dir, inTab = false, folder) => process.send?.({ openFolder: dir, inTab, folder }),
     chooseFolder: (inTab = false) => process.send?.({ chooseFolder: true, inTab }),
     connectAgent: () => process.send?.({ connectAgent: true }),
+    // A search asks Spotlight before it walks the folder.
+    findByName: process.platform === 'darwin' ? spotlightFind : null,
     web,
     // The MCP server for agents on this machine (MCP_TOKEN; MCP_URL is main.js's fixed port in front of it).
     // What the model opens is shown in the window, which main.js does.

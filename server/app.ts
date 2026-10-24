@@ -44,7 +44,7 @@ import { ImageStore } from './images.ts';
 import { deckPreview, docPreview, markdownPreview, sheetPreview, type FilePreview } from '../shared/preview.ts';
 import { cleanFolderName, cleanFolderPath, folderName, joinFolder } from '../shared/folders.ts';
 import { FolderStore, type Folders } from './folders.ts';
-import { LISTED_EXTS, listedKind, LocalFileStore, LocalFolder, LocalFolders, LocalSheetStore } from './localStore.ts';
+import { LISTED_EXTS, listedKind, LocalFileStore, LocalFolder, LocalFolders, LocalSheetStore, type FindByName } from './localStore.ts';
 import { openedFiles, recentFiles, RecentOpens, recentsAvailable, type Recents } from './recents.ts';
 import { googleFromEnv, GoogleLogin, GoogleLoginError, GOOGLE_STATE_TTL_MS, type GoogleOptions } from './googleAuth.ts';
 import { mountPlugin } from '../plugin/server/mount.ts';
@@ -174,6 +174,8 @@ export interface AppOptions {
      * such list. Recents lists them below the files opened in the app. Tests give their own.
      */
     recents?: (() => Promise<Recents>) | null;
+    /** An index that finds files by name in the folder faster than walking it (Spotlight on macOS); without it a search walks. */
+    findByName?: FindByName | null;
     /**
      * An MCP server for agents on this machine (server/localMcp.ts) at /mcp, for requests with this bearer
      * token. `url` is where agents reach it (desktop/main.js's fixed port); `show` puts a page in the window.
@@ -235,7 +237,7 @@ export async function buildApp(opts: AppOptions) {
     mailRequests.set(key, [...recent, now]);
     return false;
   };
-  const folder = opts.local ? new LocalFolder(opts.local.dir, path.join(opts.dataDir, 'trash')) : null;
+  const folder = opts.local ? new LocalFolder(opts.local.dir, path.join(opts.dataDir, 'trash'), opts.local.findByName) : null;
   const sheets = folder ? new LocalSheetStore(db, folder, opts.dataDir) : new SheetStore(db, path.join(opts.dataDir, 'sheets'));
   await sheets.init();
   /**
