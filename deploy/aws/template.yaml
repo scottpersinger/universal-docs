@@ -13,10 +13,10 @@ Description: MCP Docs on the web (single instance)
 Parameters:
   DomainName:
     Type: String
-    Default: docs.freeflow.im
+    Default: mcpdocs.freeflow.im
   OtherDomains:
     Type: String
-    Default: mcpdocs.freeflow.im
+    Default: docs.freeflow.im
     Description: More host names served as the app (comma-separated), each with its own certificate
   InstanceType:
     Type: String
