@@ -13,7 +13,11 @@ Description: MCP Docs on the web (single instance)
 Parameters:
   DomainName:
     Type: String
+    Default: docs.freeflow.im
+  OtherDomains:
+    Type: String
     Default: mcpdocs.freeflow.im
+    Description: More host names served as the app (comma-separated), each with its own certificate
   InstanceType:
     Type: String
     Default: t4g.medium
@@ -198,7 +202,7 @@ Resources:
 
           mkdir -p /opt/mcpdocs
           cat > /opt/mcpdocs/Caddyfile <<'EOF'
-          ${DomainName} {
+          ${DomainName}, ${OtherDomains} {
             reverse_proxy app:3001
           }
           EOF
